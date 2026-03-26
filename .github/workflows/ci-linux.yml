@@ -18,17 +18,6 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🫓 Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: latest
-
-      - name: 🎨 Build Frontend
-        run: |
-          cd src/frontend
-          bun install
-          bun run build
-
       - name: 🦀 Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
