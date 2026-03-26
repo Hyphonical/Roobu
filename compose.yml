@@ -2,7 +2,7 @@ name: Roobu
 
 services:
   qdrant:
-    image: qdrant/qdrant:v1.13.6
+    image: qdrant/qdrant:latest
     name: Roobu-Qdrant
     restart: unless-stopped
     ports:
