@@ -3,7 +3,7 @@ name: Roobu
 services:
   qdrant:
     image: qdrant/qdrant:latest
-    name: Roobu-Qdrant
+    container_name: Roobu-Qdrant
     restart: unless-stopped
     ports:
       - "6333:6333"
@@ -11,16 +11,16 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/ > /dev/null"]
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/ || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 30
+      start_period: 30s
 
   roobu:
     build: .
     restart: unless-stopped
-    name: Roobu
+    container_name: Roobu
     depends_on:
       qdrant:
         condition: service_healthy

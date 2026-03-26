@@ -5,7 +5,10 @@ use image::{DynamicImage, imageops::FilterType};
 use ndarray::{Array2, Array4, s};
 use ort::{
 	inputs,
-	session::{Session, builder::AutoDevicePolicy},
+	session::{
+		Session,
+		builder::{AutoDevicePolicy, GraphOptimizationLevel},
+	},
 	value::Tensor,
 };
 use tokenizers::Tokenizer;
@@ -14,6 +17,8 @@ use crate::error::RoobuError;
 
 pub const EMBED_DIM: usize = 1024;
 const SEQ_LEN: usize = 64;
+const FUSION_INIT_ERROR_MARKERS: [&str; 2] =
+	["SimplifiedLayerNormFusion", "InsertedPrecisionFreeCast_"];
 
 pub struct Embedder {
 	vision: Mutex<Session>,
@@ -26,15 +31,11 @@ unsafe impl Sync for Embedder {}
 
 impl Embedder {
 	pub fn new(models_dir: &Path) -> Result<Self, RoobuError> {
-		let vision = Session::builder()?
-			.with_auto_device(AutoDevicePolicy::MaxPerformance)
-			.map_err(|e| RoobuError::Onnx(e.into()))?
-			.commit_from_file(models_dir.join("vision_model_q4f16.onnx"))?;
+		let vision_path = models_dir.join("vision_model_q4f16.onnx");
+		let text_path = models_dir.join("text_model_q4f16.onnx");
 
-		let text = Session::builder()?
-			.with_auto_device(AutoDevicePolicy::MaxPerformance)
-			.map_err(|e| RoobuError::Onnx(e.into()))?
-			.commit_from_file(models_dir.join("text_model_q4f16.onnx"))?;
+		let vision = create_session_with_fallback(&vision_path, "vision")?;
+		let text = create_session_with_fallback(&text_path, "text")?;
 
 		tracing::debug!(
 			"vision inputs:  {:?}",
@@ -161,6 +162,43 @@ impl Embedder {
 		expect_shape(&shape, 1, EMBED_DIM)?;
 		l2_normalize(&data[..EMBED_DIM])
 	}
+}
+
+fn create_session_with_fallback(
+	model_path: &Path,
+	model_kind: &str,
+) -> Result<Session, RoobuError> {
+	match create_session(model_path, GraphOptimizationLevel::All) {
+		Ok(session) => Ok(session),
+		Err(first_error) if is_fusion_init_error(&first_error) => {
+			tracing::warn!(
+				model = model_kind,
+				path = %model_path.display(),
+				error = %first_error,
+				"onnx init failed with full graph optimizations; retrying with basic optimizations"
+			);
+
+			create_session(model_path, GraphOptimizationLevel::Level1).map_err(RoobuError::Onnx)
+		}
+		Err(error) => Err(RoobuError::Onnx(error)),
+	}
+}
+
+fn create_session(model_path: &Path, level: GraphOptimizationLevel) -> Result<Session, ort::Error> {
+	let mut builder = Session::builder()?
+		.with_auto_device(AutoDevicePolicy::MaxPerformance)
+		.map_err(|e| -> ort::Error { e.into() })?
+		.with_optimization_level(level)
+		.map_err(|e| -> ort::Error { e.into() })?;
+
+	builder.commit_from_file(model_path)
+}
+
+fn is_fusion_init_error(error: &ort::Error) -> bool {
+	let message = error.to_string();
+	FUSION_INIT_ERROR_MARKERS
+		.iter()
+		.any(|marker| message.contains(marker))
 }
 
 fn expect_shape(shape: &[i64], rows: usize, cols: usize) -> Result<(), RoobuError> {
