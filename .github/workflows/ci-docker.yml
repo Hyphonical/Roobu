@@ -8,7 +8,7 @@ on:
 
 jobs:
   docker:
-    name: 🐳 Build Image
+    name: 🚧 Build Image
     runs-on: ubuntu-latest
 
     steps:
@@ -18,7 +18,7 @@ jobs:
       - name: 🏗️ Setup Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: 🐳 Build roobu image
+      - name: 🚧 Build roobu image
         uses: docker/build-push-action@v6
         with:
           context: .

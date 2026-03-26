@@ -11,15 +11,8 @@ env:
 
 jobs:
   build:
-    name: 🚧 macOS ${{ matrix.arch }}
+    name: 🚧 macOS aarch64
     runs-on: macos-latest
-    strategy:
-      matrix:
-        include:
-          - arch: x86_64
-            target: x86_64-apple-darwin
-          - arch: aarch64
-            target: aarch64-apple-darwin
 
     steps:
       - name: 📥 Checkout
@@ -28,7 +21,7 @@ jobs:
       - name: 🦀 Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin
 
       - name: 📦 Cache Cargo
         uses: actions/cache@v4
@@ -39,22 +32,22 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: macos-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: macos-aarch64-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: 🚧 Build Release
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target aarch64-apple-darwin
 
       - name: 📦 Stage Files
         run: |
           mkdir dist
-          cp target/${{ matrix.target }}/release/roobu dist/
+          cp target/aarch64-apple-darwin/release/roobu dist/
           [ -f LICENSE ] && cp LICENSE dist/ || true
           [ -f README.md ] && cp README.md dist/ || true
 
       - name: 📤 Upload
         uses: actions/upload-artifact@v4
         with:
-          name: roobu-macos-${{ matrix.arch }}
+          name: roobu-macos-aarch64
           path: dist/*
           compression-level: 9
           if-no-files-found: error
