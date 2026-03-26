@@ -35,5 +35,5 @@ jobs:
           file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/roobu:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/roobu:latest
+            ghcr.io/hyphonical/roobu:${{ github.sha }}
+            ghcr.io/hyphonical/roobu:latest
