@@ -1,0 +1,42 @@
+name: Roobu
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.13.6
+    name: Roobu-Qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/ > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  roobu:
+    build: .
+    restart: unless-stopped
+    name: Roobu
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    environment:
+      QDRANT_URL: http://qdrant:6334
+      RULE34_API_KEY: ${RULE34_API_KEY}
+      RULE34_USER_ID: ${RULE34_USER_ID}
+      RUST_LOG: roobu=info
+    volumes:
+      - ./models:/app/models:ro
+      - roobu_data:/app/data
+    command:
+      - ingest
+      - --checkpoint
+      - /app/data/checkpoint.json
+
+volumes:
+  qdrant_data:
+  roobu_data:

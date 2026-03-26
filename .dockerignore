@@ -1,0 +1,7 @@
+.git
+.github
+target
+models
+checkpoint.json
+docker-data
+*.log

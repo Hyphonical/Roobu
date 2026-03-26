@@ -1,0 +1,49 @@
+[package]
+name         = "roobu"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.88.0"
+description  = "Semantic image search for booru sites."
+license      = "MIT"
+
+[[bin]]
+name = "roobu"
+path = "src/main.rs"
+
+[dependencies]
+# ── Async Runtime ─────────────────────────────────────────
+tokio        = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs"] }
+futures      = "0.3"
+
+# ── ONNX Inference ────────────────────────────────────────
+ort          = { version = "2.0.0-rc.12", features = ["cuda", "directml", "coreml", "half", "api-22"] }
+ndarray      = "0.17"
+tokenizers   = { version = "0.22", default-features = false, features = ["onig"] }
+
+# ── Vector Database Client ────────────────────────────────
+qdrant-client = "1"
+
+# ── Image Processing ──────────────────────────────────────
+image        = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+
+# ── HTTP Client ───────────────────────────────────────────
+reqwest      = { version = "0.13", default-features = false, features = ["rustls", "json", "gzip"] }
+
+# ── Command-Line Interface ─────────────────────────────────
+clap         = { version = "4", features = ["derive", "env"] }
+
+# ── Error Handling ─────────────────────────────────────────
+anyhow       = "1"
+thiserror    = "2"
+
+# ── Serialization ──────────────────────────────────────────
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+bytes        = "1"
+
+# ── Logging ────────────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# ── Terminal Output ────────────────────────────────────────
+owo-colors   = { version = "4", features = ["supports-colors"] }

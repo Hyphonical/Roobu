@@ -1,0 +1,72 @@
+name: macOS Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: 🚧 macOS ${{ matrix.arch }}
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-apple-darwin
+          - arch: aarch64
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🫓 Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: 🎨 Build Frontend
+        run: |
+          cd src/frontend
+          bun install
+          bun run build
+
+      - name: 🦀 Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: 📦 Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: macos-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: 🚧 Build Release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: 📦 Stage Files
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/roobu dist/
+          [ -f LICENSE ] && cp LICENSE dist/ || true
+          [ -f README.md ] && cp README.md dist/ || true
+
+      - name: 📤 Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: roobu-macos-${{ matrix.arch }}
+          path: dist/*
+          compression-level: 9
+          if-no-files-found: error
+          retention-days: 7
