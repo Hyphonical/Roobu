@@ -143,7 +143,7 @@ The Docker CI workflow in `.github/workflows/ci-docker.yml` builds the image on 
 roobu ingest [OPTIONS]
 
 Options:
-  --site <SITE>                  Optional site selector: rule34|e621 (omit to run all supported sites sequentially)
+  --site <SITE>                  Optional site selector: rule34|e621|safebooru (omit to run all supported sites sequentially)
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --models-dir <PATH>           Model directory [default: models]
   --checkpoint <PATH>           Checkpoint file [default: checkpoint.json]

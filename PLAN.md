@@ -108,9 +108,10 @@ post_id        = point_id % 1_000_000_000_000
 | Namespace | Site |
 |---|---|
 | 1 | `rule34.xxx` |
-| 2 | (reserved — e621) |
-| 3 | (reserved — Gelbooru) |
-| 4 | (reserved — Danbooru) |
+| 2 | `e621.net` |
+| 3 | `safebooru.org` |
+| 4 | (reserved — Gelbooru) |
+| 5 | (reserved — Danbooru) |
 
 Adding a new site means choosing the next unused number. Existing data is never touched.
 

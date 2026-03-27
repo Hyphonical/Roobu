@@ -237,21 +237,21 @@ pub async fn run_multi(
 	};
 
 	loop {
-    // Compute per-site sleep duration (rounded down). Ensure at least 1 second.
-    let per_site_sleep = if !states.is_empty() {
-        config.poll_interval_secs / states.len() as u64
-    } else {
-        config.poll_interval_secs
-    };
-    let per_site_sleep = per_site_sleep.max(1);
-    for state in &mut states {
-        run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await?;
-        tracing::debug!(
-            site = state.site,
-            sleep_secs = per_site_sleep,
-            "per-site ingest loop sleep"
-        );
-        tokio::time::sleep(std::time::Duration::from_secs(per_site_sleep)).await;
-    }
-}
+		// Compute per-site sleep duration (rounded down). Ensure at least 1 second.
+		let per_site_sleep = if !states.is_empty() {
+			config.poll_interval_secs / states.len() as u64
+		} else {
+			config.poll_interval_secs
+		};
+		let per_site_sleep = per_site_sleep.max(1);
+		for state in &mut states {
+			run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await?;
+			tracing::debug!(
+				site = state.site,
+				sleep_secs = per_site_sleep,
+				"per-site ingest loop sleep"
+			);
+			tokio::time::sleep(std::time::Duration::from_secs(per_site_sleep)).await;
+		}
+	}
 }

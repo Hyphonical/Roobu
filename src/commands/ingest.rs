@@ -56,6 +56,10 @@ fn build_all_sites_clients(args: &Args) -> anyhow::Result<Vec<sites::SiteClient>
 		sites::SiteKind::E621,
 		site_credentials(args),
 	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::Safebooru,
+		site_credentials(args),
+	)?);
 
 	if clients.is_empty() {
 		anyhow::bail!("no ingest clients available")
@@ -103,5 +107,53 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 			);
 			ingest::run_multi(clients, &store, embedder, &args.checkpoint, &ingest_config).await
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::path::PathBuf;
+
+	use crate::embed::OnnxOptimizationIntensity;
+	use crate::sites::BooruClient;
+
+	use super::{Args, build_all_sites_clients};
+
+	fn default_args() -> Args {
+		Args {
+			site: None,
+			qdrant_url: "http://localhost:6334".to_string(),
+			models_dir: PathBuf::from("models"),
+			checkpoint: PathBuf::from("checkpoint.json"),
+			poll_interval: 60,
+			batch_size: 16,
+			download_concurrency: 8,
+			rule34_api_key: None,
+			rule34_user_id: None,
+			e621_login: None,
+			e621_api_key: None,
+			onnx_optimization: OnnxOptimizationIntensity::Safe,
+		}
+	}
+
+	#[test]
+	fn all_sites_mode_includes_e621_and_safebooru_without_rule34_credentials() {
+		let args = default_args();
+		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
+
+		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
+		assert_eq!(site_names, vec!["e621", "safebooru"]);
+	}
+
+	#[test]
+	fn all_sites_mode_includes_rule34_when_credentials_are_present() {
+		let mut args = default_args();
+		args.rule34_api_key = Some("api-key".to_string());
+		args.rule34_user_id = Some("user-id".to_string());
+
+		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
+		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
+
+		assert_eq!(site_names, vec!["rule34", "e621", "safebooru"]);
 	}
 }
