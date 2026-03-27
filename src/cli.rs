@@ -21,10 +21,9 @@ pub enum Commands {
 		#[arg(
 			long,
 			value_enum,
-			default_value_t = SiteKind::Rule34,
-			help = "Site to ingest from (rule34 or e621)"
+			help = "Site to ingest from (rule34 or e621). If omitted, ingests supported sites sequentially"
 		)]
-		site: SiteKind,
+		site: Option<SiteKind>,
 
 		#[arg(
 			long,
@@ -195,4 +194,33 @@ pub enum Commands {
 		)]
 		allow_single_cluster: bool,
 	},
+}
+
+#[cfg(test)]
+mod tests {
+	use clap::Parser;
+
+	use super::{Cli, Commands};
+	use crate::sites::SiteKind;
+
+	#[test]
+	fn ingest_without_site_uses_all_sites_mode() {
+		let cli = Cli::try_parse_from(["roobu", "ingest"]).expect("ingest args should parse");
+
+		match cli.command {
+			Commands::Ingest { site, .. } => assert_eq!(site, None),
+			_ => panic!("expected ingest command"),
+		}
+	}
+
+	#[test]
+	fn ingest_with_site_uses_requested_site() {
+		let cli = Cli::try_parse_from(["roobu", "ingest", "--site", "e621"])
+			.expect("ingest args with site should parse");
+
+		match cli.command {
+			Commands::Ingest { site, .. } => assert_eq!(site, Some(SiteKind::E621)),
+			_ => panic!("expected ingest command"),
+		}
+	}
 }

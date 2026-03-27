@@ -143,7 +143,7 @@ The Docker CI workflow in `.github/workflows/ci-docker.yml` builds the image on 
 roobu ingest [OPTIONS]
 
 Options:
-  --site <SITE>                  Site to ingest from: rule34|e621 [default: rule34]
+  --site <SITE>                  Optional site selector: rule34|e621 (omit to run all supported sites sequentially)
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --models-dir <PATH>           Model directory [default: models]
   --checkpoint <PATH>           Checkpoint file [default: checkpoint.json]
@@ -160,6 +160,11 @@ Options:
 Example:
 
 ```bash
+# All-sites mode (sequential)
+roobu ingest \
+  --qdrant-url http://localhost:6334
+
+# Single-site mode
 roobu ingest \
   --site rule34 \
   --qdrant-url http://localhost:6334 \
@@ -207,7 +212,6 @@ Notes:
 - If `--site` is omitted, search runs across all indexed sites.
 
 Examples:
-
 ```bash
 # Fully visual
 roobu search --qdrant-url http://localhost:6334 --weight 1.0 "woman on beach"
