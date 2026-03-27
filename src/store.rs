@@ -425,3 +425,25 @@ fn extract_named_dense_vector(
 		vector_output::Vector::Sparse(_) | vector_output::Vector::MultiDense(_) => None,
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::{decode_point_id, encode_point_id};
+
+	#[test]
+	fn point_id_roundtrip_preserves_site_and_post_id() {
+		let encoded = encode_point_id(2, 6_290_764);
+		let (site_ns, post_id) = decode_point_id(encoded);
+
+		assert_eq!(site_ns, 2);
+		assert_eq!(post_id, 6_290_764);
+	}
+
+	#[test]
+	fn different_site_namespaces_produce_unique_ids() {
+		let rule34 = encode_point_id(1, 42);
+		let e621 = encode_point_id(2, 42);
+
+		assert_ne!(rule34, e621);
+	}
+}

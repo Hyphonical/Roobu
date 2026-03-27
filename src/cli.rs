@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::{config, embed};
+use crate::{config, embed, sites::SiteKind};
 
 #[derive(Parser)]
 #[command(
@@ -18,6 +18,14 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
 	Ingest {
+		#[arg(
+			long,
+			value_enum,
+			default_value_t = SiteKind::Rule34,
+			help = "Site to ingest from (rule34 or e621)"
+		)]
+		site: SiteKind,
+
 		#[arg(
 			long,
 			env = "QDRANT_URL",
@@ -41,11 +49,35 @@ pub enum Commands {
 		#[arg(long, default_value_t = config::DEFAULT_DOWNLOAD_CONCURRENCY, help = "Maximum number of concurrent image downloads")]
 		download_concurrency: usize,
 
-		#[arg(long, env = "RULE34_API_KEY", help = "Rule34 API key")]
-		api_key: String,
+		#[arg(
+			long,
+			visible_alias = "api-key",
+			env = "RULE34_API_KEY",
+			help = "Rule34 API key (required when --site rule34)"
+		)]
+		rule34_api_key: Option<String>,
 
-		#[arg(long, env = "RULE34_USER_ID", help = "Rule34 user ID")]
-		user_id: String,
+		#[arg(
+			long,
+			visible_alias = "user-id",
+			env = "RULE34_USER_ID",
+			help = "Rule34 user ID (required when --site rule34)"
+		)]
+		rule34_user_id: Option<String>,
+
+		#[arg(
+			long,
+			env = "E621_LOGIN",
+			help = "e621 login (optional, must be paired with --e621-api-key)"
+		)]
+		e621_login: Option<String>,
+
+		#[arg(
+			long,
+			env = "E621_API_KEY",
+			help = "e621 API key (optional, must be paired with --e621-login)"
+		)]
+		e621_api_key: Option<String>,
 
 		#[arg(
 			long,
@@ -152,9 +184,10 @@ pub enum Commands {
 
 		#[arg(
 			long,
-			help = "Optional epsilon threshold; higher values favor tighter, more conservative clusters"
+			default_value_t = config::DEFAULT_CLUSTER_EPSILON,
+			help = "Strictness threshold; higher values favor tighter, more conservative clusters"
 		)]
-		epsilon: Option<f64>,
+		epsilon: f64,
 
 		#[arg(
 			long,

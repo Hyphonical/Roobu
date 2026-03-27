@@ -1,4 +1,7 @@
+pub mod e621;
 pub mod rule34;
+
+use anyhow::Context;
 
 use crate::config;
 use crate::error::RoobuError;
@@ -15,6 +18,44 @@ pub struct Post {
 	pub site_namespace: u64,
 }
 
+#[derive(clap::ValueEnum, Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SiteKind {
+	Rule34,
+	E621,
+}
+
+pub struct SiteCredentials {
+	pub rule34_api_key: Option<String>,
+	pub rule34_user_id: Option<String>,
+	pub e621_login: Option<String>,
+	pub e621_api_key: Option<String>,
+}
+
+pub enum SiteClient {
+	Rule34(rule34::Rule34Client),
+	E621(e621::E621Client),
+}
+
+pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Result<SiteClient> {
+	match site {
+		SiteKind::Rule34 => {
+			let api_key = credentials
+				.rule34_api_key
+				.context("--rule34-api-key (or RULE34_API_KEY) is required when --site rule34")?;
+			let user_id = credentials
+				.rule34_user_id
+				.context("--rule34-user-id (or RULE34_USER_ID) is required when --site rule34")?;
+			Ok(SiteClient::Rule34(rule34::Rule34Client::new(
+				api_key, user_id,
+			)?))
+		}
+		SiteKind::E621 => Ok(SiteClient::E621(e621::E621Client::new(
+			credentials.e621_login,
+			credentials.e621_api_key,
+		)?)),
+	}
+}
+
 impl Post {
 	pub fn post_url(&self) -> String {
 		match self.site {
@@ -22,6 +63,7 @@ impl Post {
 				"https://rule34.xxx/index.php?page=post&s=view&id={}",
 				self.id
 			),
+			"e621" => format!("https://e621.net/posts/{}", self.id),
 			_ => format!("https://unknown/?id={}", self.id),
 		}
 	}
@@ -83,6 +125,29 @@ pub trait BooruClient: Send + Sync {
 	) -> impl Future<Output = Result<bytes::Bytes, RoobuError>> + Send;
 }
 
+impl BooruClient for SiteClient {
+	fn site_name(&self) -> &'static str {
+		match self {
+			SiteClient::Rule34(client) => client.site_name(),
+			SiteClient::E621(client) => client.site_name(),
+		}
+	}
+
+	async fn fetch_recent(&self, last_id: u64) -> Result<Vec<Post>, RoobuError> {
+		match self {
+			SiteClient::Rule34(client) => client.fetch_recent(last_id).await,
+			SiteClient::E621(client) => client.fetch_recent(last_id).await,
+		}
+	}
+
+	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+		match self {
+			SiteClient::Rule34(client) => client.download_preview(url).await,
+			SiteClient::E621(client) => client.download_preview(url).await,
+		}
+	}
+}
+
 use std::future::Future;
 
 pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::DynamicImage> {
@@ -113,4 +178,55 @@ pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::Dy
 	}
 
 	Some(img)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::Post;
+
+	#[test]
+	fn post_url_is_site_specific() {
+		let rule34 = Post {
+			id: 123,
+			tags: String::new(),
+			preview_url: String::new(),
+			width: 0,
+			height: 0,
+			rating: String::new(),
+			site: "rule34",
+			site_namespace: 1,
+		};
+		let e621 = Post {
+			id: 456,
+			tags: String::new(),
+			preview_url: String::new(),
+			width: 0,
+			height: 0,
+			rating: String::new(),
+			site: "e621",
+			site_namespace: 2,
+		};
+
+		assert_eq!(
+			rule34.post_url(),
+			"https://rule34.xxx/index.php?page=post&s=view&id=123"
+		);
+		assert_eq!(e621.post_url(), "https://e621.net/posts/456");
+	}
+
+	#[test]
+	fn tags_normalized_uses_unknown_for_empty_input() {
+		let post = Post {
+			id: 1,
+			tags: "   ".to_string(),
+			preview_url: String::new(),
+			width: 0,
+			height: 0,
+			rating: String::new(),
+			site: "rule34",
+			site_namespace: 1,
+		};
+
+		assert_eq!(post.tags_normalized(), "unknown");
+	}
 }

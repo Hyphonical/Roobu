@@ -95,9 +95,10 @@ docker compose up -d qdrant
 
 ```bash
 roobu ingest \
+  --site rule34 \
   --qdrant-url http://localhost:6334 \
-  --api-key "$RULE34_API_KEY" \
-  --user-id "$RULE34_USER_ID"
+  --rule34-api-key "$RULE34_API_KEY" \
+  --rule34-user-id "$RULE34_USER_ID"
 ```
 
 ### 5. Search
@@ -142,6 +143,7 @@ The Docker CI workflow in `.github/workflows/ci-docker.yml` builds the image on 
 roobu ingest [OPTIONS]
 
 Options:
+  --site <SITE>                  Site to ingest from: rule34|e621 [default: rule34]
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --models-dir <PATH>           Model directory [default: models]
   --checkpoint <PATH>           Checkpoint file [default: checkpoint.json]
@@ -149,22 +151,36 @@ Options:
   --batch-size <N>              Batch size [default: 16]
   --download-concurrency <N>    Concurrent downloads [default: 8]
   --onnx-optimization <LEVEL>   ONNX optimization: safe|balanced|aggressive [default: safe]
-  --api-key <KEY>               Rule34 API key (or RULE34_API_KEY)
-  --user-id <ID>                Rule34 user id (or RULE34_USER_ID)
+  --rule34-api-key <KEY>        Rule34 API key (or RULE34_API_KEY), required for --site rule34
+  --rule34-user-id <ID>         Rule34 user id (or RULE34_USER_ID), required for --site rule34
+  --e621-login <LOGIN>          e621 login (or E621_LOGIN), optional (must be paired)
+  --e621-api-key <KEY>          e621 API key (or E621_API_KEY), optional (must be paired)
 ```
 
 Example:
 
 ```bash
 roobu ingest \
+  --site rule34 \
   --qdrant-url http://localhost:6334 \
   --models-dir ./models \
   --checkpoint ./checkpoint.json \
   --poll-interval 45 \
   --batch-size 24 \
   --download-concurrency 12 \
-  --api-key "$RULE34_API_KEY" \
-  --user-id "$RULE34_USER_ID"
+  --rule34-api-key "$RULE34_API_KEY" \
+  --rule34-user-id "$RULE34_USER_ID"
+
+# e621 ingest (no API credentials required)
+roobu ingest \
+  --site e621 \
+  --qdrant-url http://localhost:6334
+
+# e621 ingest with account auth from .env
+roobu ingest \
+  --site e621 \
+  --e621-login "$E621_LOGIN" \
+  --e621-api-key "$E621_API_KEY"
 ```
 
 ### `search` - Find matching posts
@@ -188,6 +204,7 @@ Notes:
 - Tag-vector weight is computed as `1.0 - weight`.
 - If both `QUERY` and `--image` are set, the query embedding blend also uses `--weight`.
 - `safe` optimization is the default and is the most reliable profile for constrained VPS deployments.
+- If `--site` is omitted, search runs across all indexed sites.
 
 Examples:
 
@@ -222,7 +239,7 @@ Options:
   --min-samples <N>             Optional core-distance neighborhood override
   -l, --limit <N>               Sample URLs to print per cluster [default: 10]
   --max-cluster-size <N>        Optional cap for very large clusters
-  --epsilon <F64>               Optional strictness threshold for cluster selection
+  --epsilon <F64>               Strictness threshold for cluster selection [default: 0.05]
   --allow-single-cluster        Allow a single dominant cluster
 ```
 
@@ -233,6 +250,7 @@ Notes:
 - Output includes per-cluster cohesion, a representative URL, and up to `--limit` sample URLs.
 - If clusters are too broad, try higher `--min-samples`, non-zero `--epsilon`, or `--max-cluster-size`.
 - Noise points are labeled `-1` by HDBSCAN.
+- `--epsilon 0.05` is a conservative default for normalized embedding spaces; raise gradually if you want fewer micro-clusters.
 
 Example:
 

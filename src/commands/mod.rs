@@ -7,25 +7,31 @@ use crate::cli;
 pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 	match command {
 		cli::Commands::Ingest {
+			site,
 			qdrant_url,
 			models_dir,
 			checkpoint,
 			poll_interval,
 			batch_size,
 			download_concurrency,
-			api_key,
-			user_id,
+			rule34_api_key,
+			rule34_user_id,
+			e621_login,
+			e621_api_key,
 			onnx_optimization,
 		} => {
 			ingest::run(ingest::Args {
+				site,
 				qdrant_url,
 				models_dir,
 				checkpoint,
 				poll_interval,
 				batch_size,
 				download_concurrency,
-				api_key,
-				user_id,
+				rule34_api_key,
+				rule34_user_id,
+				e621_login,
+				e621_api_key,
 				onnx_optimization,
 			})
 			.await

@@ -19,7 +19,7 @@ pub struct Args {
 	pub min_samples: Option<usize>,
 	pub limit: usize,
 	pub max_cluster_size: Option<usize>,
-	pub epsilon: Option<f64>,
+	pub epsilon: f64,
 	pub allow_single_cluster: bool,
 }
 
@@ -43,12 +43,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 			"--max-cluster-size must be greater than or equal to --min-cluster-size"
 		);
 	}
-	if let Some(value) = args.epsilon {
-		ensure!(
-			value >= 0.0,
-			"--epsilon must be greater than or equal to 0.0"
-		);
-	}
+	ensure!(
+		args.epsilon >= 0.0,
+		"--epsilon must be greater than or equal to 0.0"
+	);
 
 	ui_step!("{}", "Connecting to Qdrant…");
 	let store = store::Store::new(&args.qdrant_url).await?;
@@ -92,9 +90,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	if let Some(max_size) = args.max_cluster_size {
 		hyper_params = hyper_params.max_cluster_size(max_size);
 	}
-	if let Some(value) = args.epsilon {
-		hyper_params = hyper_params.epsilon(value);
-	}
+	hyper_params = hyper_params.epsilon(args.epsilon);
 
 	ui_step!("{}", "Running HDBSCAN…");
 	let labels = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<i32>> {
