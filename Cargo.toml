@@ -51,7 +51,7 @@ owo-colors   = { version = "4", features = ["supports-colors"] }
 
 # ── Release Profile ────────────────────────────────────────
 [profile.release]
-opt-level     = 3
+opt-level     = "z"
 lto           = "fat"
 codegen-units = 1
 strip         = true
