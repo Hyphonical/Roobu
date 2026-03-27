@@ -137,6 +137,26 @@ pub enum Commands {
 		min_samples: Option<usize>,
 
 		#[arg(
+			short,
+			long,
+			default_value_t = config::DEFAULT_CLUSTER_PREVIEW_LIMIT,
+			help = "Number of sample URLs to print per cluster"
+		)]
+		limit: usize,
+
+		#[arg(
+			long,
+			help = "Optional maximum cluster size before HDBSCAN treats larger groups as unstable"
+		)]
+		max_cluster_size: Option<usize>,
+
+		#[arg(
+			long,
+			help = "Optional epsilon threshold; higher values favor tighter, more conservative clusters"
+		)]
+		epsilon: Option<f64>,
+
+		#[arg(
 			long,
 			help = "Allow a single dominant cluster when data strongly supports it"
 		)]

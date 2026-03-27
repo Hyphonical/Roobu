@@ -323,7 +323,7 @@ impl Store {
 
 			let mut request = ScrollPointsBuilder::new(config::QDRANT_COLLECTION)
 				.limit(limit)
-				.with_payload(false)
+				.with_payload(true)
 				.with_vectors(VectorsSelector {
 					names: vec!["image".to_string()],
 				});
@@ -352,9 +352,11 @@ impl Store {
 					continue;
 				};
 
-				let PointIdOptions::Num(_) = id else {
+				let PointIdOptions::Num(point_id) = id else {
 					continue;
 				};
+
+				let (_, post_id) = decode_point_id(*point_id);
 
 				let Some(vectors) = point.vectors.as_ref() else {
 					continue;
@@ -368,7 +370,18 @@ impl Store {
 					continue;
 				}
 
-				points.push(ClusterPoint { image_vec });
+				let post_url = point
+					.payload
+					.get("post_url")
+					.and_then(|value| value.as_str())
+					.map_or("", |value| value)
+					.to_string();
+
+				points.push(ClusterPoint {
+					post_id,
+					post_url,
+					image_vec,
+				});
 
 				if points.len() >= max_points {
 					break;
@@ -392,6 +405,8 @@ pub struct SearchResult {
 }
 
 pub struct ClusterPoint {
+	pub post_id: u64,
+	pub post_url: String,
 	pub image_vec: Vec<f32>,
 }
 

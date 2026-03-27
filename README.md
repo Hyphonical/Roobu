@@ -220,6 +220,9 @@ Options:
   --max-points <N>              Maximum vectors to fetch before clustering [default: 50000]
   --min-cluster-size <N>        Minimum samples required for a cluster [default: 10]
   --min-samples <N>             Optional core-distance neighborhood override
+  -l, --limit <N>               Sample URLs to print per cluster [default: 10]
+  --max-cluster-size <N>        Optional cap for very large clusters
+  --epsilon <F64>               Optional strictness threshold for cluster selection
   --allow-single-cluster        Allow a single dominant cluster
 ```
 
@@ -227,6 +230,8 @@ Notes:
 
 - Retrieval is paged (`--page-size`) to avoid large one-shot Qdrant requests.
 - `--max-points` bounds total load and runtime on smaller VPS/database setups.
+- Output includes per-cluster cohesion, a representative URL, and up to `--limit` sample URLs.
+- If clusters are too broad, try higher `--min-samples`, non-zero `--epsilon`, or `--max-cluster-size`.
 - Noise points are labeled `-1` by HDBSCAN.
 
 Example:
@@ -236,9 +241,11 @@ roobu cluster \
   --qdrant-url http://localhost:6334 \
   --site rule34 \
   --page-size 256 \
-  --max-points 30000 \
+  --max-points 1500 \
   --min-cluster-size 12 \
-  --min-samples 8
+  --min-samples 8 \
+  --epsilon 0.05 \
+  --limit 10
 ```
 
 ## Qdrant Quantization

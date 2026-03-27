@@ -9,6 +9,8 @@ pub const DEFAULT_IMAGE_WEIGHT: f32 = 1.0;
 pub const DEFAULT_CLUSTER_PAGE_SIZE: u32 = 256;
 pub const DEFAULT_CLUSTER_MAX_POINTS: usize = 50_000;
 pub const DEFAULT_CLUSTER_MIN_CLUSTER_SIZE: usize = 10;
+pub const DEFAULT_CLUSTER_PREVIEW_LIMIT: usize = 10;
+pub const DEFAULT_CLUSTER_LOW_COHESION_THRESHOLD: f64 = 0.75;
 pub const DEFAULT_TRACING_FILTER: &str = "roobu=info";
 
 pub const QDRANT_COLLECTION: &str = "roobu";
