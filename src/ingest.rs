@@ -67,11 +67,7 @@ pub async fn run(
 						let url = post.preview_url.clone();
 						match http_client.download_preview(&url).await {
 							Ok(data) => {
-								if let Some(img) = validate_downloaded_image(post.id, &data) {
-									Some((post, img))
-								} else {
-									None
-								}
+								validate_downloaded_image(post.id, &data).map(|img| (post, img))
 							}
 							Err(e) => {
 								tracing::warn!(post_id = post.id, error = %e, "download failed");
@@ -120,7 +116,7 @@ pub async fn run(
 			let embeddings =
 				tokio::task::spawn_blocking(move || -> Result<Vec<PostEmbedding>, RoobuError> {
 					let preprocessed: Vec<DynamicImage> =
-						images.iter().map(|img| Embedder::preprocess(img)).collect();
+						images.iter().map(Embedder::preprocess).collect();
 
 					let image_vecs = embedder_clone.embed_images(&preprocessed)?;
 

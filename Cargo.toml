@@ -22,6 +22,7 @@ tokenizers   = { version = "0.22", default-features = false, features = ["onig"]
 
 # ── Vector Database Client ────────────────────────────────
 qdrant-client = "1"
+hdbscan       = "0.12"
 
 # ── Image Processing ──────────────────────────────────────
 image        = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }

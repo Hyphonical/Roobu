@@ -25,10 +25,12 @@ pub fn warn(msg: fmt::Arguments<'_>) {
 	println!("{} {}", "⚠".yellow(), msg);
 }
 
+#[allow(dead_code)]
 pub fn fail(msg: fmt::Arguments<'_>) {
 	println!("{} {}", "✗".red().bold(), msg);
 }
 
+#[allow(dead_code)]
 pub fn sub_detail(msg: fmt::Arguments<'_>) {
 	println!("  {}", msg.to_string().dimmed());
 }

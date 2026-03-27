@@ -1,5 +1,6 @@
 pub mod rule34;
 
+use crate::config;
 use crate::error::RoobuError;
 
 #[derive(Debug, Clone)]
@@ -52,18 +53,18 @@ impl Post {
 	}
 
 	pub fn is_aspect_ratio_ok(ratio: f32) -> bool {
-		ratio <= 2.0
+		ratio <= config::MAX_IMAGE_ASPECT_RATIO
 	}
 
 	pub fn passes_preflight(&self) -> bool {
 		if !self.has_preview() {
 			return false;
 		}
-		if let Some(ratio) = self.aspect_ratio() {
-			if !Self::is_aspect_ratio_ok(ratio) {
-				tracing::debug!(post_id = self.id, ratio, "skipped: aspect ratio");
-				return false;
-			}
+		if let Some(ratio) = self.aspect_ratio()
+			&& !Self::is_aspect_ratio_ok(ratio)
+		{
+			tracing::debug!(post_id = self.id, ratio, "skipped: aspect ratio");
+			return false;
 		}
 		true
 	}
@@ -71,7 +72,6 @@ impl Post {
 
 pub trait BooruClient: Send + Sync {
 	fn site_name(&self) -> &'static str;
-	fn site_namespace(&self) -> u64;
 
 	fn fetch_recent(
 		&self,
@@ -86,7 +86,7 @@ pub trait BooruClient: Send + Sync {
 use std::future::Future;
 
 pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::DynamicImage> {
-	if bytes.len() < 500 {
+	if bytes.len() < config::MIN_DOWNLOADED_IMAGE_BYTES {
 		tracing::warn!(post_id, len = bytes.len(), "skipped: tiny image");
 		return None;
 	}
@@ -100,16 +100,16 @@ pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::Dy
 	};
 
 	let (w, h) = (img.width(), img.height());
-	if w < 32 || h < 32 {
+	if w < config::MIN_IMAGE_EDGE_PX || h < config::MIN_IMAGE_EDGE_PX {
 		tracing::warn!(post_id, w, h, "skipped: too small");
 		return None;
 	}
 
-	if let Some(ratio) = Post::aspect_ratio_from_dims(w, h) {
-		if !Post::is_aspect_ratio_ok(ratio) {
-			tracing::debug!(post_id, ratio, "skipped: decoded aspect ratio");
-			return None;
-		}
+	if let Some(ratio) = Post::aspect_ratio_from_dims(w, h)
+		&& !Post::is_aspect_ratio_ok(ratio)
+	{
+		tracing::debug!(post_id, ratio, "skipped: decoded aspect ratio");
+		return None;
 	}
 
 	Some(img)

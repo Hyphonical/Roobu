@@ -16,6 +16,7 @@ No SaaS. No API gateway maze. No mystery black box in someone else's cloud.
 - [Usage](#usage)
   - [`ingest` - Pull + index new posts](#ingest---pull--index-new-posts)
   - [`search` - Find matching posts](#search---find-matching-posts)
+  - [`cluster` - Run HDBSCAN over stored vectors](#cluster---run-hdbscan-over-stored-vectors)
 - [Qdrant Quantization](#qdrant-quantization)
 - [Resetting the Database](#resetting-the-database)
 - [Contributing](#contributing)
@@ -51,10 +52,13 @@ It is built for "I want this running on my VPS tonight" energy.
 ## Features
 
 - Natural-language search over booru content
+- Query by text, image, or text+image hybrid
 - Hybrid scoring with two vectors per post:
   - `image` vector from thumbnail
   - `tags` vector from normalized tags text
 - Query-time weighting (`--weight`) between image and tag relevance
+- HDBSCAN clustering over stored image vectors with paged Qdrant retrieval
+- Configurable ONNX graph optimization intensity (`--onnx-optimization`)
 - Continuous ingestion loop with checkpoint resume support
 - Pre-flight and post-download image validation filters
 - Qdrant named vectors with scalar quantization (`Int8`, quantile `0.99`)
@@ -144,6 +148,7 @@ Options:
   --poll-interval <SECONDS>     Poll interval [default: 60]
   --batch-size <N>              Batch size [default: 16]
   --download-concurrency <N>    Concurrent downloads [default: 8]
+  --onnx-optimization <LEVEL>   ONNX optimization: safe|balanced|aggressive [default: safe]
   --api-key <KEY>               Rule34 API key (or RULE34_API_KEY)
   --user-id <ID>                Rule34 user id (or RULE34_USER_ID)
 ```
@@ -165,20 +170,24 @@ roobu ingest \
 ### `search` - Find matching posts
 
 ```bash
-roobu search <QUERY> [OPTIONS]
+roobu search [QUERY] [OPTIONS]
 
 Options:
   -l, --limit <N>               Results to return [default: 10]
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --models-dir <PATH>           Model directory [default: models]
-  --weight <0.0-1.0>            Image weight [default: 1.0]
+  -i, --image <PATH>            Optional image query path
+  --weight <0.0-1.0>            Image weight (query blend + index weighting) [default: 1.0]
+  --onnx-optimization <LEVEL>   ONNX optimization: safe|balanced|aggressive [default: safe]
   --site <NAME>                 Payload site filter (e.g. rule34)
 ```
 
 Notes:
 
-- `--weight` controls image-vector influence.
+- `--weight` controls image influence in two places.
 - Tag-vector weight is computed as `1.0 - weight`.
+- If both `QUERY` and `--image` are set, the query embedding blend also uses `--weight`.
+- `safe` optimization is the default and is the most reliable profile for constrained VPS deployments.
 
 Examples:
 
@@ -186,11 +195,50 @@ Examples:
 # Fully visual
 roobu search --qdrant-url http://localhost:6334 --weight 1.0 "woman on beach"
 
+# Image-only query
+roobu search --qdrant-url http://localhost:6334 --image ./query.png
+
+# Text + image hybrid query
+roobu search --qdrant-url http://localhost:6334 --image ./query.png --weight 0.6 "pink hair shocked blue eyes"
+
 # Hybrid scoring (70% image, 30% tags)
 roobu search --qdrant-url http://localhost:6334 --weight 0.7 "pink bedroom"
 
 # Restrict to one site
 roobu search --qdrant-url http://localhost:6334 --site rule34 "elf warrior"
+```
+
+### `cluster` - Run HDBSCAN over stored vectors
+
+```bash
+roobu cluster [OPTIONS]
+
+Options:
+  --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
+  --site <NAME>                 Optional site payload filter (e.g. rule34)
+  --page-size <N>               Scroll page size per Qdrant request [default: 256]
+  --max-points <N>              Maximum vectors to fetch before clustering [default: 50000]
+  --min-cluster-size <N>        Minimum samples required for a cluster [default: 10]
+  --min-samples <N>             Optional core-distance neighborhood override
+  --allow-single-cluster        Allow a single dominant cluster
+```
+
+Notes:
+
+- Retrieval is paged (`--page-size`) to avoid large one-shot Qdrant requests.
+- `--max-points` bounds total load and runtime on smaller VPS/database setups.
+- Noise points are labeled `-1` by HDBSCAN.
+
+Example:
+
+```bash
+roobu cluster \
+  --qdrant-url http://localhost:6334 \
+  --site rule34 \
+  --page-size 256 \
+  --max-points 30000 \
+  --min-cluster-size 12 \
+  --min-samples 8
 ```
 
 ## Qdrant Quantization

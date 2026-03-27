@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use clap::ValueEnum;
 use image::{DynamicImage, imageops::FilterType};
 use ndarray::{Array2, Array4, s};
 use ort::{
@@ -13,77 +14,104 @@ use ort::{
 };
 use tokenizers::Tokenizer;
 
+use crate::config;
 use crate::error::RoobuError;
 
 pub const EMBED_DIM: usize = 1024;
-const SEQ_LEN: usize = 64;
-const FUSION_INIT_ERROR_MARKERS: [&str; 2] =
-	["SimplifiedLayerNormFusion", "InsertedPrecisionFreeCast_"];
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum OnnxOptimizationIntensity {
+	Safe,
+	Balanced,
+	Aggressive,
+}
+
+impl OnnxOptimizationIntensity {
+	fn graph_level(self) -> GraphOptimizationLevel {
+		match self {
+			Self::Safe => GraphOptimizationLevel::Level1,
+			Self::Balanced => GraphOptimizationLevel::Level2,
+			Self::Aggressive => GraphOptimizationLevel::All,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ModelLoad {
+	TextOnly,
+	VisionOnly,
+	TextAndVision,
+}
 
 pub struct Embedder {
-	vision: Mutex<Session>,
-	text: Mutex<Session>,
-	tokenizer: Tokenizer,
+	vision: Option<Mutex<Session>>,
+	text: Option<Mutex<Session>>,
+	tokenizer: Option<Tokenizer>,
 }
 
 unsafe impl Send for Embedder {}
 unsafe impl Sync for Embedder {}
 
 impl Embedder {
-	pub fn new(models_dir: &Path) -> Result<Self, RoobuError> {
+	pub fn new(
+		models_dir: &Path,
+		model_load: ModelLoad,
+		onnx_optimization: OnnxOptimizationIntensity,
+	) -> Result<Self, RoobuError> {
 		let vision_path = models_dir.join("vision_model_q4f16.onnx");
 		let text_path = models_dir.join("text_model_q4f16.onnx");
+		let graph_level = onnx_optimization.graph_level();
 
-		let vision = create_session_with_fallback(&vision_path, "vision")?;
-		let text = create_session_with_fallback(&text_path, "text")?;
+		let vision = if matches!(model_load, ModelLoad::VisionOnly | ModelLoad::TextAndVision) {
+			let session = create_session(&vision_path, graph_level)?;
+			log_session_io("vision", &session);
+			Some(Mutex::new(session))
+		} else {
+			None
+		};
 
-		tracing::debug!(
-			"vision inputs:  {:?}",
-			vision.inputs().iter().map(|i| i.name()).collect::<Vec<_>>()
-		);
-		tracing::debug!(
-			"vision outputs: {:?}",
-			vision
-				.outputs()
-				.iter()
-				.map(|o| o.name())
-				.collect::<Vec<_>>()
-		);
-		tracing::debug!(
-			"text inputs:    {:?}",
-			text.inputs().iter().map(|i| i.name()).collect::<Vec<_>>()
-		);
-		tracing::debug!(
-			"text outputs:   {:?}",
-			text.outputs().iter().map(|o| o.name()).collect::<Vec<_>>()
-		);
+		let text = if matches!(model_load, ModelLoad::TextOnly | ModelLoad::TextAndVision) {
+			let session = create_session(&text_path, graph_level)?;
+			log_session_io("text", &session);
+			Some(Mutex::new(session))
+		} else {
+			None
+		};
 
-		let tokenizer =
-			Tokenizer::from_file(models_dir.join("tokenizer.json")).map_err(RoobuError::from)?;
+		let tokenizer = if matches!(model_load, ModelLoad::TextOnly | ModelLoad::TextAndVision) {
+			Some(
+				Tokenizer::from_file(models_dir.join("tokenizer.json"))
+					.map_err(RoobuError::from)?,
+			)
+		} else {
+			None
+		};
 
 		Ok(Self {
-			vision: Mutex::new(vision),
-			text: Mutex::new(text),
+			vision,
+			text,
 			tokenizer,
 		})
 	}
 
 	pub fn preprocess(img: &DynamicImage) -> DynamicImage {
+		let image_size = config::SIGLIP_IMAGE_SIZE;
 		let (w, h) = (img.width(), img.height());
-		let scale = 256.0 / w.min(h) as f32;
+		let scale = image_size as f32 / w.min(h) as f32;
 		let new_w = (w as f32 * scale).round() as u32;
 		let new_h = (h as f32 * scale).round() as u32;
 		let resized = img.resize_exact(new_w, new_h, FilterType::Lanczos3);
-		let x = new_w.saturating_sub(256) / 2;
-		let y = new_h.saturating_sub(256) / 2;
-		resized.crop_imm(x, y, 256, 256)
+		let x = new_w.saturating_sub(image_size) / 2;
+		let y = new_h.saturating_sub(image_size) / 2;
+		resized.crop_imm(x, y, image_size, image_size)
 	}
 
 	fn to_tensor(img: &DynamicImage) -> Array4<f32> {
+		let image_size = config::SIGLIP_IMAGE_SIZE as usize;
 		let rgb = img.to_rgb8();
-		let mut arr = Array4::<f32>::zeros((1, 3, 256, 256));
-		for y in 0..256usize {
-			for x in 0..256usize {
+		let mut arr = Array4::<f32>::zeros((1, 3, image_size, image_size));
+		for y in 0..image_size {
+			for x in 0..image_size {
 				let p = rgb.get_pixel(x as u32, y as u32);
 				for c in 0..3 {
 					arr[[0, c, y, x]] = p[c] as f32 / 255.0 * 2.0 - 1.0;
@@ -97,12 +125,18 @@ impl Embedder {
 		&self,
 		images: &[DynamicImage],
 	) -> Result<Vec<[f32; EMBED_DIM]>, RoobuError> {
+		let vision = self
+			.vision
+			.as_ref()
+			.ok_or(RoobuError::ModelNotLoaded("vision model"))?;
+
 		if images.is_empty() {
 			return Err(RoobuError::EmptyBatch);
 		}
 
 		let n = images.len();
-		let mut batch = Array4::<f32>::zeros((n, 3, 256, 256));
+		let image_size = config::SIGLIP_IMAGE_SIZE as usize;
+		let mut batch = Array4::<f32>::zeros((n, 3, image_size, image_size));
 		for (i, img) in images.iter().enumerate() {
 			let t = Self::to_tensor(img);
 			batch
@@ -111,14 +145,13 @@ impl Embedder {
 		}
 
 		let vision_input = Tensor::from_array(batch)?;
-		let mut session = self
-			.vision
+		let mut session = vision
 			.lock()
 			.map_err(|_| RoobuError::Tokenizer("vision mutex poisoned".into()))?;
 		let outputs = session.run(inputs!["pixel_values" => vision_input])?;
 		let (shape, data) = outputs["pooler_output"].try_extract_tensor::<f32>()?;
 
-		expect_shape(&shape, n, EMBED_DIM)?;
+		expect_shape(shape, n, EMBED_DIM)?;
 		let cols = shape[1] as usize;
 
 		(0..n)
@@ -134,71 +167,71 @@ impl Embedder {
 	}
 
 	pub fn embed_text(&self, text: &str) -> Result<[f32; EMBED_DIM], RoobuError> {
+		let tokenizer = self
+			.tokenizer
+			.as_ref()
+			.ok_or(RoobuError::ModelNotLoaded("text tokenizer"))?;
+		let text_session = self
+			.text
+			.as_ref()
+			.ok_or(RoobuError::ModelNotLoaded("text model"))?;
+
 		let text = if text.trim().is_empty() {
 			"unknown"
 		} else {
 			text
 		};
 
-		let enc = self
-			.tokenizer
-			.encode(text, true)
-			.map_err(RoobuError::from)?;
+		let enc = tokenizer.encode(text, true).map_err(RoobuError::from)?;
 		let mut ids: Vec<i64> = enc.get_ids().iter().map(|&x| i64::from(x)).collect();
-		ids.truncate(SEQ_LEN);
-		ids.resize(SEQ_LEN, 0);
+		ids.truncate(config::SIGLIP_TEXT_SEQ_LEN);
+		ids.resize(config::SIGLIP_TEXT_SEQ_LEN, 0);
 
-		let input = Array2::from_shape_vec((1, SEQ_LEN), ids)
+		let input = Array2::from_shape_vec((1, config::SIGLIP_TEXT_SEQ_LEN), ids)
 			.map_err(|e| RoobuError::Tokenizer(e.to_string()))?;
 		let tensor = Tensor::from_array(input)?;
 
-		let mut session = self
-			.text
+		let mut session = text_session
 			.lock()
 			.map_err(|_| RoobuError::Tokenizer("text mutex poisoned".into()))?;
 		let outputs = session.run(inputs!["input_ids" => tensor])?;
 		let (shape, data) = outputs["pooler_output"].try_extract_tensor::<f32>()?;
 
-		expect_shape(&shape, 1, EMBED_DIM)?;
+		expect_shape(shape, 1, EMBED_DIM)?;
 		l2_normalize(&data[..EMBED_DIM])
 	}
 }
 
-fn create_session_with_fallback(
-	model_path: &Path,
-	model_kind: &str,
-) -> Result<Session, RoobuError> {
-	match create_session(model_path, GraphOptimizationLevel::All) {
-		Ok(session) => Ok(session),
-		Err(first_error) if is_fusion_init_error(&first_error) => {
-			tracing::warn!(
-				model = model_kind,
-				path = %model_path.display(),
-				error = %first_error,
-				"onnx init failed with full graph optimizations; retrying with basic optimizations"
-			);
-
-			create_session(model_path, GraphOptimizationLevel::Level1).map_err(RoobuError::Onnx)
-		}
-		Err(error) => Err(RoobuError::Onnx(error)),
-	}
+fn log_session_io(model_name: &str, session: &Session) {
+	tracing::debug!(
+		"{model_name} inputs:  {:?}",
+		session
+			.inputs()
+			.iter()
+			.map(|i| i.name())
+			.collect::<Vec<_>>()
+	);
+	tracing::debug!(
+		"{model_name} outputs: {:?}",
+		session
+			.outputs()
+			.iter()
+			.map(|o| o.name())
+			.collect::<Vec<_>>()
+	);
 }
 
-fn create_session(model_path: &Path, level: GraphOptimizationLevel) -> Result<Session, ort::Error> {
-	let mut builder = Session::builder()?
+fn create_session(model_path: &Path, level: GraphOptimizationLevel) -> Result<Session, RoobuError> {
+	let mut builder = Session::builder()
+		.map_err(RoobuError::Onnx)?
 		.with_auto_device(AutoDevicePolicy::MaxPerformance)
-		.map_err(|e| -> ort::Error { e.into() })?
+		.map_err(|e| RoobuError::Onnx(e.into()))?
 		.with_optimization_level(level)
-		.map_err(|e| -> ort::Error { e.into() })?;
+		.map_err(|e| RoobuError::Onnx(e.into()))?;
 
-	builder.commit_from_file(model_path)
-}
-
-fn is_fusion_init_error(error: &ort::Error) -> bool {
-	let message = error.to_string();
-	FUSION_INIT_ERROR_MARKERS
-		.iter()
-		.any(|marker| message.contains(marker))
+	builder
+		.commit_from_file(model_path)
+		.map_err(RoobuError::Onnx)
 }
 
 fn expect_shape(shape: &[i64], rows: usize, cols: usize) -> Result<(), RoobuError> {
@@ -242,6 +275,15 @@ fn l2_normalize(slice: &[f32]) -> Result<[f32; EMBED_DIM], RoobuError> {
 	Ok(out)
 }
 
-pub fn cosine(a: &[f32; EMBED_DIM], b: &[f32; EMBED_DIM]) -> f32 {
-	a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+pub fn blend_embeddings(
+	text: &[f32; EMBED_DIM],
+	image: &[f32; EMBED_DIM],
+	image_weight: f32,
+) -> Result<[f32; EMBED_DIM], RoobuError> {
+	let text_weight = 1.0 - image_weight;
+	let mut blended = [0.0f32; EMBED_DIM];
+	for i in 0..EMBED_DIM {
+		blended[i] = text_weight * text[i] + image_weight * image[i];
+	}
+	l2_normalize(&blended)
 }

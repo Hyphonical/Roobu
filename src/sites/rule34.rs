@@ -100,10 +100,6 @@ impl BooruClient for Rule34Client {
 		SITE_NAME
 	}
 
-	fn site_namespace(&self) -> u64 {
-		SITE_NAMESPACE
-	}
-
 	async fn fetch_recent(&self, last_id: u64) -> Result<Vec<Post>, RoobuError> {
 		let body = self.fetch_page_raw().await?;
 
