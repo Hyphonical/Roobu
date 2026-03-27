@@ -1,5 +1,6 @@
 pub mod e621;
 pub mod rule34;
+pub mod safebooru;
 
 use anyhow::Context;
 
@@ -22,6 +23,7 @@ pub struct Post {
 pub enum SiteKind {
 	Rule34,
 	E621,
+	Safebooru,
 }
 
 pub struct SiteCredentials {
@@ -34,6 +36,7 @@ pub struct SiteCredentials {
 pub enum SiteClient {
 	Rule34(rule34::Rule34Client),
 	E621(e621::E621Client),
+	Safebooru(safebooru::SafebooruClient),
 }
 
 pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Result<SiteClient> {
@@ -53,6 +56,7 @@ pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Res
 			credentials.e621_login,
 			credentials.e621_api_key,
 		)?)),
+		SiteKind::Safebooru => Ok(SiteClient::Safebooru(safebooru::SafebooruClient::new()?)),
 	}
 }
 
@@ -64,6 +68,10 @@ impl Post {
 				self.id
 			),
 			"e621" => format!("https://e621.net/posts/{}", self.id),
+			"safebooru" => format!(
+				"https://safebooru.org/index.php?page=post&s=view&id={}",
+				self.id
+			),
 			_ => format!("https://unknown/?id={}", self.id),
 		}
 	}
@@ -130,6 +138,7 @@ impl BooruClient for SiteClient {
 		match self {
 			SiteClient::Rule34(client) => client.site_name(),
 			SiteClient::E621(client) => client.site_name(),
+			SiteClient::Safebooru(client) => client.site_name(),
 		}
 	}
 
@@ -137,6 +146,7 @@ impl BooruClient for SiteClient {
 		match self {
 			SiteClient::Rule34(client) => client.fetch_recent(last_id).await,
 			SiteClient::E621(client) => client.fetch_recent(last_id).await,
+			SiteClient::Safebooru(client) => client.fetch_recent(last_id).await,
 		}
 	}
 
@@ -144,6 +154,7 @@ impl BooruClient for SiteClient {
 		match self {
 			SiteClient::Rule34(client) => client.download_preview(url).await,
 			SiteClient::E621(client) => client.download_preview(url).await,
+			SiteClient::Safebooru(client) => client.download_preview(url).await,
 		}
 	}
 }
@@ -206,12 +217,26 @@ mod tests {
 			site: "e621",
 			site_namespace: 2,
 		};
+		let safebooru = Post {
+			id: 789,
+			tags: String::new(),
+			preview_url: String::new(),
+			width: 0,
+			height: 0,
+			rating: String::new(),
+			site: "safebooru",
+			site_namespace: 3,
+		};
 
 		assert_eq!(
 			rule34.post_url(),
 			"https://rule34.xxx/index.php?page=post&s=view&id=123"
 		);
 		assert_eq!(e621.post_url(), "https://e621.net/posts/456");
+		assert_eq!(
+			safebooru.post_url(),
+			"https://safebooru.org/index.php?page=post&s=view&id=789"
+		);
 	}
 
 	#[test]
