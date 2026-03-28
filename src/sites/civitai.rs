@@ -9,8 +9,6 @@ use crate::error::RoobuError;
 const POSTS_URL: &str = "https://civitai.com/api/v1/images";
 const SITE_NAME: &str = "civitai";
 const SITE_NAMESPACE: u64 = 12;
-const MEDIA_CACHE_BASE_URL: &str = "https://image-b2.civitai.com/file/civitai-media-cache";
-const MEDIA_CACHE_SIZE_SEGMENT: &str = "450x%3Cauto%3E_so";
 const MAX_POSTS_PER_PAGE: u16 = 200;
 const MAX_RETRIES: u32 = 6;
 const INITIAL_BACKOFF: Duration = Duration::from_secs(5);
@@ -69,8 +67,6 @@ struct RawListing {
 struct RawImage {
 	id: u64,
 	#[serde(default)]
-	url: Option<String>,
-	#[serde(default)]
 	width: u32,
 	#[serde(default)]
 	height: u32,
@@ -91,11 +87,7 @@ impl RawImage {
 		Post {
 			id: self.id,
 			tags: build_tags(&self.username, &self.base_model, &self.meta),
-			preview_url: self
-				.url
-				.as_deref()
-				.map(to_media_cache_url)
-				.unwrap_or_default(),
+			preview_url: format!("https://civitai.com/images/{}", self.id),
 			width: self.width,
 			height: self.height,
 			rating: rating_from_nsfw(self.nsfw, &self.nsfw_level),
@@ -213,55 +205,9 @@ fn push_unique(tags: &mut Vec<String>, value: &str) {
 	}
 }
 
-fn to_media_cache_url(original_url: &str) -> String {
-	let Some(media_id) = extract_media_id(original_url) else {
-		return original_url.to_string();
-	};
-
-	format!("{MEDIA_CACHE_BASE_URL}/{media_id}/{MEDIA_CACHE_SIZE_SEGMENT}")
-}
-
-fn extract_media_id(url: &str) -> Option<String> {
-	let parsed = reqwest::Url::parse(url).ok()?;
-	let mut media_id = None;
-
-	for segment in parsed.path_segments()? {
-		let normalized = segment.split_once('?').map_or(segment, |(value, _)| value);
-		let stem = normalized
-			.rsplit_once('.')
-			.map_or(normalized, |(value, _)| value);
-
-		if is_uuid_like(stem) {
-			media_id = Some(stem.to_string());
-		}
-	}
-
-	media_id
-}
-
-fn is_uuid_like(value: &str) -> bool {
-	let bytes = value.as_bytes();
-	if bytes.len() != 36 {
-		return false;
-	}
-
-	for (idx, ch) in bytes.iter().enumerate() {
-		let is_dash_slot = matches!(idx, 8 | 13 | 18 | 23);
-		if is_dash_slot {
-			if *ch != b'-' {
-				return false;
-			}
-		} else if !ch.is_ascii_hexdigit() {
-			return false;
-		}
-	}
-
-	true
-}
-
 #[cfg(test)]
 mod tests {
-	use super::{RawImage, to_media_cache_url};
+	use super::RawImage;
 
 	#[test]
 	fn into_post_builds_tags_and_maps_soft_rating() {
@@ -292,10 +238,7 @@ mod tests {
 		let post = raw.into_post();
 
 		assert_eq!(post.rating, "q");
-		assert_eq!(
-			post.preview_url,
-			"https://image-b2.civitai.com/file/civitai-media-cache/706a7ed9-bbac-4ade-89e1-a40694524396/450x%3Cauto%3E_so"
-		);
+		assert_eq!(post.preview_url, "https://civitai.com/images/125673839");
 		assert_eq!(post.width, 840);
 		assert_eq!(post.height, 1080);
 		assert!(post.tags.contains("tobycortes"));
@@ -326,12 +269,6 @@ mod tests {
 
 		let post = raw.into_post();
 		assert_eq!(post.rating, "e");
-		assert_eq!(post.preview_url, "");
-	}
-
-	#[test]
-	fn media_cache_url_falls_back_for_unrecognized_path() {
-		let original = "https://image.civitai.com/no-uuid-here/sample.jpeg";
-		assert_eq!(to_media_cache_url(original), original);
+		assert_eq!(post.preview_url, "https://civitai.com/images/77");
 	}
 }

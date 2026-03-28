@@ -11,6 +11,7 @@ No SaaS. No API gateway maze. No mystery black box in someone else's cloud.
 - [What's This About?](#whats-this-about)
 - [Why Does This Exist?](#why-does-this-exist)
 - [Features](#features)
+- [Documentation](#documentation)
 - [Quick Start](#quick-start)
 - [Docker](#docker)
 - [Usage](#usage)
@@ -64,6 +65,17 @@ It is built for "I want this running on my VPS tonight" energy.
 - Qdrant named vectors with scalar quantization (`Int8`, quantile `0.99`)
 - Site namespace-safe point IDs for multi-site growth
 - Dockerfile + Docker Compose support
+
+## Documentation
+
+Extended project documentation is available in [docs/README.md](docs/README.md), including:
+
+- architecture and data flow
+- command behavior and tuning
+- site support matrix
+- contributor workflow
+- troubleshooting runbook
+- step-by-step guide for adding new site adapters
 
 ## Quick Start
 
