@@ -17,7 +17,7 @@ const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const DEFAULT_BASE_URL: &str = "https://kemono.cr";
-const KNOWN_BASE_URLS: [&str; 4] = [
+const KNOWN_BASE_URLS: [&str; 1] = [
 	"https://kemono.cr",
 ];
 
