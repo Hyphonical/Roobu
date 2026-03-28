@@ -29,8 +29,8 @@ impl CivitaiClient {
 		Ok(Self { http })
 	}
 
-	async fn fetch_page_raw(&self) -> Result<String, RoobuError> {
-		let url = format!("{POSTS_URL}?limit={MAX_POSTS_PER_PAGE}&sort=Newest");
+	async fn fetch_page_raw(&self, nsfw: bool) -> Result<String, RoobuError> {
+		let url = format!("{POSTS_URL}?limit={MAX_POSTS_PER_PAGE}&sort=Newest&nsfw={nsfw}");
 
 		let mut delay = INITIAL_BACKOFF;
 
@@ -54,6 +54,52 @@ impl CivitaiClient {
 		}
 
 		Err(RoobuError::Api("max retries exceeded".into()))
+	}
+
+	fn parse_posts_from_body(&self, body: &str, last_id: u64) -> Result<Vec<Post>, RoobuError> {
+		if body.is_empty() || body.starts_with('<') {
+			tracing::debug!("empty or HTML response from API, returning empty");
+			return Ok(Vec::new());
+		}
+
+		let payload: serde_json::Value = serde_json::from_str(body)
+			.map_err(|e| RoobuError::Api(format!("JSON parse error: {e}")))?;
+
+		let Some(items) = payload.get("items").and_then(|value| value.as_array()) else {
+			tracing::debug!("civitai payload has no items array; returning empty");
+			return Ok(Vec::new());
+		};
+
+		let mut malformed_items = 0usize;
+		let mut posts = Vec::with_capacity(items.len());
+
+		for item in items {
+			match serde_json::from_value::<RawImage>(item.clone()) {
+				Ok(raw_image) => {
+					let post = raw_image.into_post();
+					if post.id > last_id {
+						posts.push(post);
+					}
+				}
+				Err(error) => {
+					malformed_items += 1;
+					let post_id = item
+						.get("id")
+						.and_then(|value| value.as_u64())
+						.unwrap_or_default();
+					tracing::debug!(post_id, error = %error, "civitai: skipping malformed image item");
+				}
+			}
+		}
+
+		if malformed_items > 0 {
+			tracing::warn!(
+				malformed_items,
+				"civitai: skipped malformed items while parsing response"
+			);
+		}
+
+		Ok(posts)
 	}
 }
 
@@ -149,50 +195,10 @@ impl BooruClient for CivitaiClient {
 	}
 
 	async fn fetch_recent(&self, last_id: u64) -> Result<Vec<Post>, RoobuError> {
-		let body = self.fetch_page_raw().await?;
+		let body = self.fetch_page_raw(true).await?;
+		let mut posts = self.parse_posts_from_body(&body, last_id)?;
 
-		if body.is_empty() || body.starts_with('<') {
-			tracing::debug!("empty or HTML response from API, returning empty");
-			return Ok(Vec::new());
-		}
-
-		let payload: serde_json::Value = serde_json::from_str(&body)
-			.map_err(|e| RoobuError::Api(format!("JSON parse error: {e}")))?;
-
-		let Some(items) = payload.get("items").and_then(|value| value.as_array()) else {
-			tracing::debug!("civitai payload has no items array; returning empty");
-			return Ok(Vec::new());
-		};
-
-		let mut malformed_items = 0usize;
-		let mut posts = Vec::with_capacity(items.len());
-
-		for item in items {
-			match serde_json::from_value::<RawImage>(item.clone()) {
-				Ok(raw_image) => {
-					let post = raw_image.into_post();
-					if post.id > last_id {
-						posts.push(post);
-					}
-				}
-				Err(error) => {
-					malformed_items += 1;
-					let post_id = item
-						.get("id")
-						.and_then(|value| value.as_u64())
-						.unwrap_or_default();
-					tracing::debug!(post_id, error = %error, "civitai: skipping malformed image item");
-				}
-			}
-		}
-
-		if malformed_items > 0 {
-			tracing::warn!(
-				malformed_items,
-				"civitai: skipped malformed items while parsing response"
-			);
-		}
-
+		posts.retain(|post| post.rating != "s");
 		Ok(posts)
 	}
 
