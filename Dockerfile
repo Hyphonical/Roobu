@@ -2,7 +2,7 @@ FROM rust:1.88-trixie AS builder
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release && \
+RUN RUSTFLAGS="-C target-cpu=znver2" cargo build --release && \
     find target -name "libonnxruntime.so*" -type f \
       -exec cp {} /usr/local/lib/ \; && \
     ldconfig
