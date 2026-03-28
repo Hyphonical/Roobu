@@ -18,6 +18,8 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 			rule34_user_id,
 			e621_login,
 			e621_api_key,
+			kemono_session,
+			kemono_base_url,
 			onnx_optimization,
 		} => {
 			ingest::run(ingest::Args {
@@ -32,6 +34,8 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 				rule34_user_id,
 				e621_login,
 				e621_api_key,
+				kemono_session,
+				kemono_base_url,
 				onnx_optimization,
 			})
 			.await

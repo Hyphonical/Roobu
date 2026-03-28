@@ -143,7 +143,7 @@ The Docker CI workflow in `.github/workflows/ci-docker.yml` builds the image on 
 roobu ingest [OPTIONS]
 
 Options:
-  --site <SITE>                  Optional site selector: rule34|e621|safebooru (omit to run all supported sites sequentially)
+  --site <SITE>                  Optional site selector: rule34|e621|safebooru|xbooru|kemono (omit to run all supported sites sequentially)
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --models-dir <PATH>           Model directory [default: models]
   --checkpoint <PATH>           Checkpoint file [default: checkpoint.json]
@@ -155,6 +155,8 @@ Options:
   --rule34-user-id <ID>         Rule34 user id (or RULE34_USER_ID), required for --site rule34
   --e621-login <LOGIN>          e621 login (or E621_LOGIN), optional (must be paired)
   --e621-api-key <KEY>          e621 API key (or E621_API_KEY), optional (must be paired)
+  --kemono-session <TOKEN>      Kemono session token (or KEMONO_SESSION), optional
+  --kemono-base-url <URL>       Kemono domain override (or KEMONO_BASE_URL), optional
 ```
 
 Example:
@@ -186,6 +188,16 @@ roobu ingest \
   --site e621 \
   --e621-login "$E621_LOGIN" \
   --e621-api-key "$E621_API_KEY"
+
+# xbooru ingest
+roobu ingest \
+  --site xbooru \
+  --qdrant-url http://localhost:6334
+
+# kemono ingest (with optional session cookie for fresher feed data)
+roobu ingest \
+  --site kemono \
+  --kemono-session "$KEMONO_SESSION"
 ```
 
 ### `search` - Find matching posts

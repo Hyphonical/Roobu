@@ -112,6 +112,8 @@ post_id        = point_id % 1_000_000_000_000
 | 3 | `safebooru.org` |
 | 4 | (reserved — Gelbooru) |
 | 5 | (reserved — Danbooru) |
+| 6 | `xbooru.com` |
+| 7 | `kemono` |
 
 Adding a new site means choosing the next unused number. Existing data is never touched.
 

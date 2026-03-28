@@ -21,6 +21,8 @@ pub struct Args {
 	pub rule34_user_id: Option<String>,
 	pub e621_login: Option<String>,
 	pub e621_api_key: Option<String>,
+	pub kemono_session: Option<String>,
+	pub kemono_base_url: Option<String>,
 	pub onnx_optimization: OnnxOptimizationIntensity,
 }
 
@@ -30,6 +32,8 @@ fn site_credentials(args: &Args) -> sites::SiteCredentials {
 		rule34_user_id: args.rule34_user_id.clone(),
 		e621_login: args.e621_login.clone(),
 		e621_api_key: args.e621_api_key.clone(),
+		kemono_session: args.kemono_session.clone(),
+		kemono_base_url: args.kemono_base_url.clone(),
 	}
 }
 
@@ -58,6 +62,14 @@ fn build_all_sites_clients(args: &Args) -> anyhow::Result<Vec<sites::SiteClient>
 	)?);
 	clients.push(sites::build_client(
 		sites::SiteKind::Safebooru,
+		site_credentials(args),
+	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::Xbooru,
+		site_credentials(args),
+	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::Kemono,
 		site_credentials(args),
 	)?);
 
@@ -132,6 +144,8 @@ mod tests {
 			rule34_user_id: None,
 			e621_login: None,
 			e621_api_key: None,
+			kemono_session: None,
+			kemono_base_url: None,
 			onnx_optimization: OnnxOptimizationIntensity::Safe,
 		}
 	}
@@ -142,7 +156,7 @@ mod tests {
 		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
 
 		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
-		assert_eq!(site_names, vec!["e621", "safebooru"]);
+		assert_eq!(site_names, vec!["e621", "safebooru", "xbooru", "kemono"]);
 	}
 
 	#[test]
@@ -154,6 +168,9 @@ mod tests {
 		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
 		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
 
-		assert_eq!(site_names, vec!["rule34", "e621", "safebooru"]);
+		assert_eq!(
+			site_names,
+			vec!["rule34", "e621", "safebooru", "xbooru", "kemono"]
+		);
 	}
 }

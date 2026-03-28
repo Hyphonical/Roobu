@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures::stream::{self, StreamExt};
 use image::DynamicImage;
@@ -44,6 +45,7 @@ async fn run_cycle(
 	let posts: Vec<Post> = posts.into_iter().filter(|p| p.passes_preflight()).collect();
 
 	if posts.is_empty() {
+		ui_step!("{}", "No new posts");
 		tracing::debug!(site, "no new posts");
 		return Ok(());
 	}
@@ -234,13 +236,11 @@ pub async fn run_multi(
 	};
 
 	loop {
-		// Compute per-site sleep duration (rounded down). Ensure at least 1 second.
-		let per_site_sleep = if !states.is_empty() {
-			config.poll_interval_secs / states.len() as u64
-		} else {
-			config.poll_interval_secs
-		};
-		let per_site_sleep = per_site_sleep.max(1);
+		// Keep per-site cadence close to the target by subtracting ingest runtime from sleep.
+		let site_count = states.len().max(1) as f64;
+		let per_site_target =
+			Duration::from_secs_f64((config.poll_interval_secs as f64 / site_count).max(1.0));
+
 		for state in &mut states {
 			header(&format!("ingest · {}", state.site));
 			if !state.resume_announced {
@@ -250,13 +250,25 @@ pub async fn run_multi(
 				);
 				state.resume_announced = true;
 			}
+
+			let cycle_start = Instant::now();
 			run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await?;
+
+			let elapsed = cycle_start.elapsed();
+			let sleep_duration = if elapsed >= per_site_target {
+				Duration::from_secs(1)
+			} else {
+				per_site_target - elapsed
+			};
+
 			tracing::debug!(
 				site = state.site,
-				sleep_secs = per_site_sleep,
+				target_secs = per_site_target.as_secs_f64(),
+				elapsed_secs = elapsed.as_secs_f64(),
+				sleep_secs = sleep_duration.as_secs_f64(),
 				"per-site ingest loop sleep"
 			);
-			tokio::time::sleep(std::time::Duration::from_secs(per_site_sleep)).await;
+			tokio::time::sleep(sleep_duration).await;
 		}
 	}
 }

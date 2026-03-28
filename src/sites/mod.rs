@@ -1,6 +1,8 @@
 pub mod e621;
+pub mod kemono;
 pub mod rule34;
 pub mod safebooru;
+pub mod xbooru;
 
 use anyhow::Context;
 
@@ -24,6 +26,8 @@ pub enum SiteKind {
 	Rule34,
 	E621,
 	Safebooru,
+	Xbooru,
+	Kemono,
 }
 
 pub struct SiteCredentials {
@@ -31,12 +35,16 @@ pub struct SiteCredentials {
 	pub rule34_user_id: Option<String>,
 	pub e621_login: Option<String>,
 	pub e621_api_key: Option<String>,
+	pub kemono_session: Option<String>,
+	pub kemono_base_url: Option<String>,
 }
 
 pub enum SiteClient {
 	Rule34(rule34::Rule34Client),
 	E621(e621::E621Client),
 	Safebooru(safebooru::SafebooruClient),
+	Xbooru(xbooru::XbooruClient),
+	Kemono(kemono::KemonoClient),
 }
 
 pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Result<SiteClient> {
@@ -57,6 +65,11 @@ pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Res
 			credentials.e621_api_key,
 		)?)),
 		SiteKind::Safebooru => Ok(SiteClient::Safebooru(safebooru::SafebooruClient::new()?)),
+		SiteKind::Xbooru => Ok(SiteClient::Xbooru(xbooru::XbooruClient::new()?)),
+		SiteKind::Kemono => Ok(SiteClient::Kemono(kemono::KemonoClient::new(
+			credentials.kemono_session,
+			credentials.kemono_base_url,
+		)?)),
 	}
 }
 
@@ -72,6 +85,11 @@ impl Post {
 				"https://safebooru.org/index.php?page=post&s=view&id={}",
 				self.id
 			),
+			"xbooru" => format!(
+				"https://xbooru.com/index.php?page=post&s=view&id={}",
+				self.id
+			),
+			"kemono" => format!("https://kemono.cr/posts/{}", self.id),
 			_ => format!("https://unknown/?id={}", self.id),
 		}
 	}
@@ -139,6 +157,8 @@ impl BooruClient for SiteClient {
 			SiteClient::Rule34(client) => client.site_name(),
 			SiteClient::E621(client) => client.site_name(),
 			SiteClient::Safebooru(client) => client.site_name(),
+			SiteClient::Xbooru(client) => client.site_name(),
+			SiteClient::Kemono(client) => client.site_name(),
 		}
 	}
 
@@ -147,6 +167,8 @@ impl BooruClient for SiteClient {
 			SiteClient::Rule34(client) => client.fetch_recent(last_id).await,
 			SiteClient::E621(client) => client.fetch_recent(last_id).await,
 			SiteClient::Safebooru(client) => client.fetch_recent(last_id).await,
+			SiteClient::Xbooru(client) => client.fetch_recent(last_id).await,
+			SiteClient::Kemono(client) => client.fetch_recent(last_id).await,
 		}
 	}
 
@@ -155,6 +177,8 @@ impl BooruClient for SiteClient {
 			SiteClient::Rule34(client) => client.download_preview(url).await,
 			SiteClient::E621(client) => client.download_preview(url).await,
 			SiteClient::Safebooru(client) => client.download_preview(url).await,
+			SiteClient::Xbooru(client) => client.download_preview(url).await,
+			SiteClient::Kemono(client) => client.download_preview(url).await,
 		}
 	}
 }
@@ -227,6 +251,26 @@ mod tests {
 			site: "safebooru",
 			site_namespace: 3,
 		};
+		let xbooru = Post {
+			id: 321,
+			tags: String::new(),
+			preview_url: String::new(),
+			width: 0,
+			height: 0,
+			rating: String::new(),
+			site: "xbooru",
+			site_namespace: 6,
+		};
+		let kemono = Post {
+			id: 654,
+			tags: String::new(),
+			preview_url: String::new(),
+			width: 0,
+			height: 0,
+			rating: String::new(),
+			site: "kemono",
+			site_namespace: 7,
+		};
 
 		assert_eq!(
 			rule34.post_url(),
@@ -237,6 +281,11 @@ mod tests {
 			safebooru.post_url(),
 			"https://safebooru.org/index.php?page=post&s=view&id=789"
 		);
+		assert_eq!(
+			xbooru.post_url(),
+			"https://xbooru.com/index.php?page=post&s=view&id=321"
+		);
+		assert_eq!(kemono.post_url(), "https://kemono.cr/posts/654");
 	}
 
 	#[test]

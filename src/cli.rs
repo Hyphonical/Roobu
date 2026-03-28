@@ -21,7 +21,7 @@ pub enum Commands {
 		#[arg(
 			long,
 			value_enum,
-			help = "Site to ingest from (rule34, e621, or safebooru). If omitted, ingests supported sites sequentially"
+			help = "Site to ingest from (rule34, e621, safebooru, xbooru, or kemono). If omitted, ingests supported sites sequentially"
 		)]
 		site: Option<SiteKind>,
 
@@ -77,6 +77,20 @@ pub enum Commands {
 			help = "e621 API key (optional, must be paired with --e621-login)"
 		)]
 		e621_api_key: Option<String>,
+
+		#[arg(
+			long,
+			env = "KEMONO_SESSION",
+			help = "Kemono session token used as cookie value (optional, can improve feed freshness)"
+		)]
+		kemono_session: Option<String>,
+
+		#[arg(
+			long,
+			env = "KEMONO_BASE_URL",
+			help = "Kemono base URL override (optional, for domain changes)"
+		)]
+		kemono_base_url: Option<String>,
 
 		#[arg(
 			long,
