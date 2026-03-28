@@ -21,6 +21,8 @@ pub struct Args {
 	pub rule34_user_id: Option<String>,
 	pub e621_login: Option<String>,
 	pub e621_api_key: Option<String>,
+	pub gelbooru_api_key: Option<String>,
+	pub gelbooru_user_id: Option<String>,
 	pub kemono_session: Option<String>,
 	pub kemono_base_url: Option<String>,
 	pub onnx_optimization: OnnxOptimizationIntensity,
@@ -32,6 +34,8 @@ fn site_credentials(args: &Args) -> sites::SiteCredentials {
 		rule34_user_id: args.rule34_user_id.clone(),
 		e621_login: args.e621_login.clone(),
 		e621_api_key: args.e621_api_key.clone(),
+		gelbooru_api_key: args.gelbooru_api_key.clone(),
+		gelbooru_user_id: args.gelbooru_user_id.clone(),
 		kemono_session: args.kemono_session.clone(),
 		kemono_base_url: args.kemono_base_url.clone(),
 	}
@@ -72,6 +76,42 @@ fn build_all_sites_clients(args: &Args) -> anyhow::Result<Vec<sites::SiteClient>
 		sites::SiteKind::Kemono,
 		site_credentials(args),
 	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::Aibooru,
+		site_credentials(args),
+	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::Danbooru,
+		site_credentials(args),
+	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::E6Ai,
+		site_credentials(args),
+	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::Konachan,
+		site_credentials(args),
+	)?);
+	clients.push(sites::build_client(
+		sites::SiteKind::Yandere,
+		site_credentials(args),
+	)?);
+
+	match (&args.gelbooru_api_key, &args.gelbooru_user_id) {
+		(Some(_), Some(_)) => clients.push(sites::build_client(
+			sites::SiteKind::Gelbooru,
+			site_credentials(args),
+		)?),
+		(None, None) => ui_step!(
+			"{}",
+			"GELBOORU_API_KEY and GELBOORU_USER_ID not set; skipping gelbooru in all-sites mode"
+		),
+		_ => {
+			anyhow::bail!(
+				"GELBOORU_API_KEY and GELBOORU_USER_ID must both be set to include gelbooru in all-sites mode"
+			)
+		}
+	}
 
 	if clients.is_empty() {
 		anyhow::bail!("no ingest clients available")
@@ -144,6 +184,8 @@ mod tests {
 			rule34_user_id: None,
 			e621_login: None,
 			e621_api_key: None,
+			gelbooru_api_key: None,
+			gelbooru_user_id: None,
 			kemono_session: None,
 			kemono_base_url: None,
 			onnx_optimization: OnnxOptimizationIntensity::Safe,
@@ -156,7 +198,20 @@ mod tests {
 		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
 
 		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
-		assert_eq!(site_names, vec!["e621", "safebooru", "xbooru", "kemono"]);
+		assert_eq!(
+			site_names,
+			vec![
+				"e621",
+				"safebooru",
+				"xbooru",
+				"kemono",
+				"aibooru",
+				"danbooru",
+				"e6ai",
+				"konachan",
+				"yandere"
+			]
+		);
 	}
 
 	#[test]
@@ -170,7 +225,44 @@ mod tests {
 
 		assert_eq!(
 			site_names,
-			vec!["rule34", "e621", "safebooru", "xbooru", "kemono"]
+			vec![
+				"rule34",
+				"e621",
+				"safebooru",
+				"xbooru",
+				"kemono",
+				"aibooru",
+				"danbooru",
+				"e6ai",
+				"konachan",
+				"yandere"
+			]
+		);
+	}
+
+	#[test]
+	fn all_sites_mode_includes_gelbooru_when_credentials_are_present() {
+		let mut args = default_args();
+		args.gelbooru_api_key = Some("api-key".to_string());
+		args.gelbooru_user_id = Some("user-id".to_string());
+
+		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
+		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
+
+		assert_eq!(
+			site_names,
+			vec![
+				"e621",
+				"safebooru",
+				"xbooru",
+				"kemono",
+				"aibooru",
+				"danbooru",
+				"e6ai",
+				"konachan",
+				"yandere",
+				"gelbooru"
+			]
 		);
 	}
 }

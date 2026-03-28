@@ -110,10 +110,14 @@ post_id        = point_id % 1_000_000_000_000
 | 1 | `rule34.xxx` |
 | 2 | `e621.net` |
 | 3 | `safebooru.org` |
-| 4 | (reserved — Gelbooru) |
-| 5 | (reserved — Danbooru) |
+| 4 | `gelbooru.com` |
+| 5 | `danbooru.donmai.us` |
 | 6 | `xbooru.com` |
 | 7 | `kemono` |
+| 8 | `aibooru.online` |
+| 9 | `e6ai.net` |
+| 10 | `konachan.com` |
+| 11 | `yande.re` |
 
 Adding a new site means choosing the next unused number. Existing data is never touched.
 
@@ -647,7 +651,7 @@ QDRANT_URL=http://my-vps:6333 roobu search "cat ears"
 
 - **Model domain mismatch:** SigLIP2 was trained on general web images, not NSFW booru content. The visual encoder will underperform on that content. Tag-based hybrid search compensates partially. This is a fundamental limitation that cannot be resolved without model fine-tuning or replacement.
 - **Page 0 only:** Only the 100 most recent posts are checked per poll cycle. No historical backfill. Initial corpus is built by running ingest from a clean checkpoint and letting it accumulate over time.
-- **Single site implemented:** Rule34 only in V1. The schema accommodates more sites without migration.
+- **Site-specific constraints:** Gelbooru currently requires API credentials.
 - **No deletion:** Removed posts remain in Qdrant until the collection is manually dropped and rebuilt.
 - **No re-indexing:** Changed thumbnails leave stale vectors until manually reindexed.
 - **Tag truncation:** Posts with many tags lose the most specific tags to the 64-token context window cutoff.

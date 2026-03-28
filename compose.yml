@@ -28,6 +28,8 @@ services:
       QDRANT_URL: http://qdrant:6334
       RULE34_API_KEY: ${RULE34_API_KEY}
       RULE34_USER_ID: ${RULE34_USER_ID}
+      GELBOORU_API_KEY: ${GELBOORU_API_KEY}
+      GELBOORU_USER_ID: ${GELBOORU_USER_ID}
       ROOBU_ONNX_OPTIMIZATION: ${ROOBU_ONNX_OPTIMIZATION:-safe}
       RUST_LOG: roobu=info
     volumes:

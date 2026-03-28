@@ -143,7 +143,7 @@ The Docker CI workflow in `.github/workflows/ci-docker.yml` builds the image on 
 roobu ingest [OPTIONS]
 
 Options:
-  --site <SITE>                  Optional site selector: rule34|e621|safebooru|xbooru|kemono (omit to run all supported sites sequentially)
+  --site <SITE>                  Optional site selector: rule34|e621|safebooru|xbooru|kemono|aibooru|danbooru|e6ai|gelbooru|konachan|yandere (omit to run all supported sites sequentially)
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --models-dir <PATH>           Model directory [default: models]
   --checkpoint <PATH>           Checkpoint file [default: checkpoint.json]
@@ -155,6 +155,8 @@ Options:
   --rule34-user-id <ID>         Rule34 user id (or RULE34_USER_ID), required for --site rule34
   --e621-login <LOGIN>          e621 login (or E621_LOGIN), optional (must be paired)
   --e621-api-key <KEY>          e621 API key (or E621_API_KEY), optional (must be paired)
+  --gelbooru-api-key <KEY>      Gelbooru API key (or GELBOORU_API_KEY), required for --site gelbooru
+  --gelbooru-user-id <ID>       Gelbooru user id (or GELBOORU_USER_ID), required for --site gelbooru
   --kemono-session <TOKEN>      Kemono session token (or KEMONO_SESSION), optional
   --kemono-base-url <URL>       Kemono domain override (or KEMONO_BASE_URL), optional
 ```
@@ -194,7 +196,23 @@ roobu ingest \
   --site xbooru \
   --qdrant-url http://localhost:6334
 
-# kemono ingest (with optional session cookie for fresher feed data)
+# danbooru ingest
+roobu ingest \
+  --site danbooru \
+  --qdrant-url http://localhost:6334
+
+# yande.re ingest
+roobu ingest \
+  --site yandere \
+  --qdrant-url http://localhost:6334
+
+# gelbooru ingest
+roobu ingest \
+  --site gelbooru \
+  --gelbooru-api-key "$GELBOORU_API_KEY" \
+  --gelbooru-user-id "$GELBOORU_USER_ID"
+
+# kemono ingest
 roobu ingest \
   --site kemono \
   --kemono-session "$KEMONO_SESSION"

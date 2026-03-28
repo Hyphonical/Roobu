@@ -21,7 +21,7 @@ pub enum Commands {
 		#[arg(
 			long,
 			value_enum,
-			help = "Site to ingest from (rule34, e621, safebooru, xbooru, or kemono). If omitted, ingests supported sites sequentially"
+			help = "Site to ingest from (rule34, e621, safebooru, xbooru, kemono, aibooru, danbooru, e6ai, gelbooru, konachan, or yandere). If omitted, ingests supported sites sequentially"
 		)]
 		site: Option<SiteKind>,
 
@@ -77,6 +77,20 @@ pub enum Commands {
 			help = "e621 API key (optional, must be paired with --e621-login)"
 		)]
 		e621_api_key: Option<String>,
+
+		#[arg(
+			long,
+			env = "GELBOORU_API_KEY",
+			help = "Gelbooru API key (required when --site gelbooru; optional in all-sites mode)"
+		)]
+		gelbooru_api_key: Option<String>,
+
+		#[arg(
+			long,
+			env = "GELBOORU_USER_ID",
+			help = "Gelbooru user ID (required when --site gelbooru; optional in all-sites mode)"
+		)]
+		gelbooru_user_id: Option<String>,
 
 		#[arg(
 			long,
@@ -234,6 +248,17 @@ mod tests {
 
 		match cli.command {
 			Commands::Ingest { site, .. } => assert_eq!(site, Some(SiteKind::E621)),
+			_ => panic!("expected ingest command"),
+		}
+	}
+
+	#[test]
+	fn ingest_with_new_site_value_parses() {
+		let cli = Cli::try_parse_from(["roobu", "ingest", "--site", "e6ai"])
+			.expect("ingest args with new site should parse");
+
+		match cli.command {
+			Commands::Ingest { site, .. } => assert_eq!(site, Some(SiteKind::E6Ai)),
 			_ => panic!("expected ingest command"),
 		}
 	}
