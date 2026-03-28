@@ -67,33 +67,64 @@ struct RawListing {
 struct RawImage {
 	id: u64,
 	#[serde(default)]
+	url: Option<String>,
+	#[serde(default)]
 	width: u32,
 	#[serde(default)]
 	height: u32,
 	#[serde(default, rename = "nsfwLevel")]
-	nsfw_level: String,
+	nsfw_level: Option<String>,
 	#[serde(default)]
 	nsfw: bool,
 	#[serde(default)]
-	username: String,
+	username: Option<String>,
 	#[serde(default, rename = "baseModel")]
-	base_model: String,
+	base_model: Option<String>,
 	#[serde(default)]
-	meta: RawMeta,
+	meta: Option<RawMeta>,
 }
 
 impl RawImage {
 	fn into_post(self) -> Post {
+		let RawImage {
+			id,
+			url,
+			width,
+			height,
+			nsfw_level,
+			nsfw,
+			username,
+			base_model,
+			meta,
+		} = self;
+
+		let fallback_page_url = format!("https://civitai.com/images/{id}");
+		let preview_url = url
+			.and_then(|value| {
+				let trimmed = value.trim();
+				if trimmed.is_empty() {
+					None
+				} else {
+					Some(trimmed.to_string())
+				}
+			})
+			.unwrap_or_else(|| fallback_page_url.clone());
+
+		let meta = meta.unwrap_or_default();
+		let username = username.unwrap_or_default();
+		let base_model = base_model.unwrap_or_default();
+		let nsfw_level = nsfw_level.unwrap_or_default();
+
 		Post {
-			id: self.id,
-			tags: build_tags(&self.username, &self.base_model, &self.meta),
-			preview_url: format!("https://civitai.com/images/{}", self.id),
-			width: self.width,
-			height: self.height,
-			rating: rating_from_nsfw(self.nsfw, &self.nsfw_level),
+			id,
+			tags: build_tags(&username, &base_model, &meta),
+			preview_url,
+			width,
+			height,
+			rating: rating_from_nsfw(nsfw, &nsfw_level),
 			site: SITE_NAME,
 			site_namespace: SITE_NAMESPACE,
-			canonical_post_url: Some(format!("https://civitai.com/images/{}", self.id)),
+			canonical_post_url: Some(fallback_page_url),
 		}
 	}
 }
@@ -238,7 +269,10 @@ mod tests {
 		let post = raw.into_post();
 
 		assert_eq!(post.rating, "q");
-		assert_eq!(post.preview_url, "https://civitai.com/images/125673839");
+		assert_eq!(
+			post.preview_url,
+			"https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/706a7ed9-bbac-4ade-89e1-a40694524396/original=true/706a7ed9-bbac-4ade-89e1-a40694524396.jpeg"
+		);
 		assert_eq!(post.width, 840);
 		assert_eq!(post.height, 1080);
 		assert!(post.tags.contains("tobycortes"));
@@ -262,7 +296,7 @@ mod tests {
 				"nsfw": true,
 				"username": "",
 				"baseModel": "",
-				"meta": {}
+				"meta": null
 			}"#,
 		)
 		.expect("valid civitai image json");
@@ -270,5 +304,28 @@ mod tests {
 		let post = raw.into_post();
 		assert_eq!(post.rating, "e");
 		assert_eq!(post.preview_url, "https://civitai.com/images/77");
+	}
+
+	#[test]
+	fn into_post_accepts_null_meta_and_nullable_strings() {
+		let raw: RawImage = serde_json::from_str(
+			r#"{
+				"id": 88,
+				"url": "https://image.civitai.com/example.png",
+				"width": 1024,
+				"height": 1024,
+				"nsfwLevel": null,
+				"nsfw": false,
+				"username": null,
+				"baseModel": null,
+				"meta": null
+			}"#,
+		)
+		.expect("valid civitai image json");
+
+		let post = raw.into_post();
+		assert_eq!(post.preview_url, "https://image.civitai.com/example.png");
+		assert_eq!(post.rating, "s");
+		assert_eq!(post.tags, "");
 	}
 }
