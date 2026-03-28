@@ -200,11 +200,17 @@ pub async fn run(
 
 	loop {
 		if let Err(error) = run_cycle(&client, site, &mut last_id, &mut context).await {
+			let error_chain = format!("{error:#}");
 			ui_warn!(
 				"{}",
-				format!("{site} cycle failed ({error}) · skipping until next poll").as_str()
+				format!("{site} cycle failed ({error_chain}) · skipping until next poll").as_str()
 			);
-			tracing::warn!(site, error = %error, "site ingest cycle failed; continuing");
+			tracing::warn!(
+				site,
+				error = %error,
+				error_chain = %error_chain,
+				"site ingest cycle failed; continuing"
+			);
 		}
 
 		tracing::debug!(
@@ -271,10 +277,11 @@ pub async fn run_multi(
 			if let Err(error) =
 				run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await
 			{
+				let error_chain = format!("{error:#}");
 				ui_warn!(
 					"{}",
 					format!(
-						"{} cycle failed ({error}) · skipping this site for now",
+						"{} cycle failed ({error_chain}) · skipping this site for now",
 						state.site
 					)
 					.as_str()
@@ -282,6 +289,7 @@ pub async fn run_multi(
 				tracing::warn!(
 					site = state.site,
 					error = %error,
+					error_chain = %error_chain,
 					"site ingest cycle failed in all-sites mode; continuing"
 				);
 			}

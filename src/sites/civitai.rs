@@ -58,20 +58,14 @@ impl CivitaiClient {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct RawListing {
-	#[serde(default)]
-	items: Vec<RawImage>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 struct RawImage {
 	id: u64,
 	#[serde(default)]
 	url: Option<String>,
 	#[serde(default)]
-	width: u32,
+	width: Option<u32>,
 	#[serde(default)]
-	height: u32,
+	height: Option<u32>,
 	#[serde(default, rename = "nsfwLevel")]
 	nsfw_level: Option<String>,
 	#[serde(default)]
@@ -119,8 +113,8 @@ impl RawImage {
 			id,
 			tags: build_tags(&username, &base_model, &meta),
 			preview_url,
-			width,
-			height,
+			width: width.unwrap_or_default(),
+			height: height.unwrap_or_default(),
 			rating: rating_from_nsfw(nsfw, &nsfw_level),
 			site: SITE_NAME,
 			site_namespace: SITE_NAMESPACE,
@@ -140,13 +134,13 @@ struct RawMeta {
 	#[serde(default)]
 	sampler: Option<String>,
 	#[serde(default)]
-	resources: Vec<RawResource>,
+	resources: Option<Vec<RawResource>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct RawResource {
 	#[serde(default)]
-	name: String,
+	name: Option<String>,
 }
 
 impl BooruClient for CivitaiClient {
@@ -162,15 +156,42 @@ impl BooruClient for CivitaiClient {
 			return Ok(Vec::new());
 		}
 
-		let raw: RawListing = serde_json::from_str(&body)
+		let payload: serde_json::Value = serde_json::from_str(&body)
 			.map_err(|e| RoobuError::Api(format!("JSON parse error: {e}")))?;
 
-		let posts: Vec<Post> = raw
-			.items
-			.into_iter()
-			.map(RawImage::into_post)
-			.filter(|p| p.id > last_id)
-			.collect();
+		let Some(items) = payload.get("items").and_then(|value| value.as_array()) else {
+			tracing::debug!("civitai payload has no items array; returning empty");
+			return Ok(Vec::new());
+		};
+
+		let mut malformed_items = 0usize;
+		let mut posts = Vec::with_capacity(items.len());
+
+		for item in items {
+			match serde_json::from_value::<RawImage>(item.clone()) {
+				Ok(raw_image) => {
+					let post = raw_image.into_post();
+					if post.id > last_id {
+						posts.push(post);
+					}
+				}
+				Err(error) => {
+					malformed_items += 1;
+					let post_id = item
+						.get("id")
+						.and_then(|value| value.as_u64())
+						.unwrap_or_default();
+					tracing::debug!(post_id, error = %error, "civitai: skipping malformed image item");
+				}
+			}
+		}
+
+		if malformed_items > 0 {
+			tracing::warn!(
+				malformed_items,
+				"civitai: skipped malformed items while parsing response"
+			);
+		}
 
 		Ok(posts)
 	}
@@ -211,8 +232,12 @@ fn build_tags(username: &str, base_model: &str, meta: &RawMeta) -> String {
 		push_unique(&mut tags, sampler);
 	}
 
-	for resource in &meta.resources {
-		push_unique(&mut tags, &resource.name);
+	if let Some(resources) = &meta.resources {
+		for resource in resources {
+			if let Some(name) = &resource.name {
+				push_unique(&mut tags, name);
+			}
+		}
 	}
 
 	if let Some(prompt) = &meta.prompt {
@@ -327,5 +352,31 @@ mod tests {
 		assert_eq!(post.preview_url, "https://image.civitai.com/example.png");
 		assert_eq!(post.rating, "s");
 		assert_eq!(post.tags, "");
+	}
+
+	#[test]
+	fn into_post_accepts_null_dimensions_and_null_resources() {
+		let raw: RawImage = serde_json::from_str(
+			r#"{
+				"id": 99,
+				"url": "https://image.civitai.com/example2.png",
+				"width": null,
+				"height": null,
+				"nsfwLevel": "None",
+				"nsfw": false,
+				"username": "artist",
+				"baseModel": "model",
+				"meta": {
+					"resources": null
+				}
+			}"#,
+		)
+		.expect("valid civitai image json");
+
+		let post = raw.into_post();
+		assert_eq!(post.width, 0);
+		assert_eq!(post.height, 0);
+		assert!(post.tags.contains("artist"));
+		assert!(post.tags.contains("model"));
 	}
 }
