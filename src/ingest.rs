@@ -23,6 +23,7 @@ struct SiteLoopState {
 	client: SiteClient,
 	site: &'static str,
 	last_id: u64,
+	resume_announced: bool,
 }
 
 struct CycleContext<'a> {
@@ -215,15 +216,11 @@ pub async fn run_multi(
 		.map(|client| {
 			let site = client.site_name();
 			let last_id = checkpoint::get(&ckpt, site);
-			header(&format!("ingest · {site}"));
-			ui_step!(
-				"{}",
-				format!("Resuming from post {}", last_id.bold().bright_white()).as_str()
-			);
 			SiteLoopState {
 				client,
 				site,
 				last_id,
+				resume_announced: false,
 			}
 		})
 		.collect();
@@ -245,6 +242,14 @@ pub async fn run_multi(
 		};
 		let per_site_sleep = per_site_sleep.max(1);
 		for state in &mut states {
+			header(&format!("ingest · {}", state.site));
+			if !state.resume_announced {
+				ui_step!(
+					"{}",
+					format!("Resuming from post {}", state.last_id.bold().bright_white()).as_str()
+				);
+				state.resume_announced = true;
+			}
 			run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await?;
 			tracing::debug!(
 				site = state.site,
