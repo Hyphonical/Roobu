@@ -14,6 +14,7 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 			poll_interval,
 			batch_size,
 			download_concurrency,
+			site_fetch_timeout_secs,
 			rule34_api_key,
 			rule34_user_id,
 			e621_login,
@@ -32,6 +33,7 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 				poll_interval,
 				batch_size,
 				download_concurrency,
+				site_fetch_timeout_secs,
 				rule34_api_key,
 				rule34_user_id,
 				e621_login,
@@ -77,6 +79,9 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 			max_cluster_size,
 			epsilon,
 			allow_single_cluster,
+			projection_dims,
+			projection_nnz,
+			projection_seed,
 		} => {
 			cluster::run(cluster::Args {
 				qdrant_url,
@@ -89,6 +94,9 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 				max_cluster_size,
 				epsilon,
 				allow_single_cluster,
+				projection_dims,
+				projection_nnz,
+				projection_seed,
 			})
 			.await
 		}

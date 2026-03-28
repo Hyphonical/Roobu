@@ -50,6 +50,13 @@ pub enum Commands {
 
 		#[arg(
 			long,
+			default_value_t = config::DEFAULT_INGEST_FETCH_TIMEOUT_SECS,
+			help = "Per-site timeout for fetching new posts before skipping the site (seconds)"
+		)]
+		site_fetch_timeout_secs: u64,
+
+		#[arg(
+			long,
 			visible_alias = "api-key",
 			env = "RULE34_API_KEY",
 			help = "Rule34 API key (required when --site rule34)"
@@ -221,6 +228,26 @@ pub enum Commands {
 			help = "Allow a single dominant cluster when data strongly supports it"
 		)]
 		allow_single_cluster: bool,
+
+		#[arg(
+			long,
+			help = "Optional dimensionality reduction target before HDBSCAN (for example: 256)"
+		)]
+		projection_dims: Option<usize>,
+
+		#[arg(
+			long,
+			default_value_t = config::DEFAULT_CLUSTER_PROJECTION_NNZ,
+			help = "Signed sparse projection density per source dimension (higher preserves more detail but is slower)"
+		)]
+		projection_nnz: usize,
+
+		#[arg(
+			long,
+			default_value_t = config::DEFAULT_CLUSTER_PROJECTION_SEED,
+			help = "Seed for deterministic sparse random projection"
+		)]
+		projection_seed: u64,
 	},
 }
 

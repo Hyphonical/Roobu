@@ -21,6 +21,9 @@ pub struct Args {
 	pub max_cluster_size: Option<usize>,
 	pub epsilon: f64,
 	pub allow_single_cluster: bool,
+	pub projection_dims: Option<usize>,
+	pub projection_nnz: usize,
+	pub projection_seed: u64,
 }
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
@@ -47,6 +50,18 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		args.epsilon >= 0.0,
 		"--epsilon must be greater than or equal to 0.0"
 	);
+	ensure!(
+		args.projection_nnz > 0,
+		"--projection-nnz must be greater than 0"
+	);
+	if let Some(dims) = args.projection_dims {
+		ensure!(dims >= 2, "--projection-dims must be at least 2");
+		ensure!(
+			dims <= embed::EMBED_DIM,
+			"--projection-dims must be less than or equal to {}",
+			embed::EMBED_DIM
+		);
+	}
 
 	ui_step!("{}", "Connecting to Qdrant…");
 	let store = store::Store::new(&args.qdrant_url).await?;
@@ -78,7 +93,12 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 
 	ui_success!("{}", format!("Fetched {} vectors", points.len()).as_str());
 
-	let data: Vec<Vec<f32>> = points.iter().map(|p| p.image_vec.clone()).collect();
+	let data = build_cluster_input(
+		&points,
+		args.projection_dims,
+		args.projection_nnz,
+		args.projection_seed,
+	);
 
 	let mut hyper_params = HdbscanHyperParams::builder()
 		.min_cluster_size(args.min_cluster_size)
@@ -198,6 +218,127 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 
 	ui_success!("Clustering complete");
 	Ok(())
+}
+
+fn build_cluster_input(
+	points: &[store::ClusterPoint],
+	projection_dims: Option<usize>,
+	projection_nnz: usize,
+	projection_seed: u64,
+) -> Vec<Vec<f32>> {
+	match projection_dims {
+		None => points.iter().map(|point| point.image_vec.clone()).collect(),
+		Some(dims) if dims == embed::EMBED_DIM => {
+			ui_warn!(
+				"--projection-dims equals embedding dimension {}; skipping projection",
+				embed::EMBED_DIM
+			);
+			points.iter().map(|point| point.image_vec.clone()).collect()
+		}
+		Some(dims) => {
+			ui_step!(
+				"{}",
+				format!(
+					"Projecting vectors from {}D to {}D (nnz {}, seed {})…",
+					embed::EMBED_DIM,
+					dims,
+					projection_nnz,
+					projection_seed
+				)
+				.as_str()
+			);
+
+			let projection = SparseRandomProjection::new(
+				embed::EMBED_DIM,
+				dims,
+				projection_nnz,
+				projection_seed,
+			);
+			let reduced: Vec<Vec<f32>> = points
+				.iter()
+				.map(|point| projection.project(&point.image_vec))
+				.collect();
+
+			ui_success!("Dimensionality reduction complete");
+			reduced
+		}
+	}
+}
+
+struct SparseRandomProjection {
+	mapping: Vec<Vec<SparseProjectionEntry>>,
+	target_dims: usize,
+}
+
+#[derive(Clone, Copy)]
+struct SparseProjectionEntry {
+	target_index: usize,
+	weight: f32,
+}
+
+impl SparseRandomProjection {
+	fn new(source_dims: usize, target_dims: usize, nnz: usize, seed: u64) -> Self {
+		let scale = 1.0f32 / (nnz as f32).sqrt();
+		let mut mapping: Vec<Vec<SparseProjectionEntry>> = Vec::with_capacity(source_dims);
+
+		for source_index in 0..source_dims {
+			let mut entries = Vec::with_capacity(nnz);
+			let mut state = splitmix64(seed ^ source_index as u64);
+
+			for slot in 0..nnz {
+				state = splitmix64(state ^ slot as u64);
+				let target_index = (state as usize) % target_dims;
+				let sign = if state & 1 == 0 { 1.0 } else { -1.0 };
+
+				entries.push(SparseProjectionEntry {
+					target_index,
+					weight: sign * scale,
+				});
+			}
+
+			mapping.push(entries);
+		}
+
+		Self {
+			mapping,
+			target_dims,
+		}
+	}
+
+	fn project(&self, input: &[f32]) -> Vec<f32> {
+		let mut output = vec![0.0f32; self.target_dims];
+
+		for (source_index, value) in input.iter().enumerate() {
+			if *value == 0.0 || source_index >= self.mapping.len() {
+				continue;
+			}
+
+			for entry in &self.mapping[source_index] {
+				output[entry.target_index] += value * entry.weight;
+			}
+		}
+
+		let norm = output
+			.iter()
+			.map(|component| component * component)
+			.sum::<f32>()
+			.sqrt();
+
+		if norm > 0.0 {
+			for component in &mut output {
+				*component /= norm;
+			}
+		}
+
+		output
+	}
+}
+
+fn splitmix64(mut x: u64) -> u64 {
+	x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+	x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+	x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+	x ^ (x >> 31)
 }
 
 struct ClusterSummary {

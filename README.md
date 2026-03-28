@@ -148,6 +148,8 @@ Options:
   --models-dir <PATH>           Model directory [default: models]
   --checkpoint <PATH>           Checkpoint file [default: checkpoint.json]
   --poll-interval <SECONDS>     Poll interval [default: 60]
+  --site-fetch-timeout-secs <SECONDS>
+                                 Per-site fetch timeout before skipping [default: 20]
   --batch-size <N>              Batch size [default: 16]
   --download-concurrency <N>    Concurrent downloads [default: 8]
   --onnx-optimization <LEVEL>   ONNX optimization: safe|balanced|aggressive [default: safe]
@@ -218,6 +220,11 @@ roobu ingest \
   --kemono-session "$KEMONO_SESSION"
 ```
 
+Notes:
+
+- In all-sites mode, a site timeout or fetch error is logged and skipped so remaining sites keep ingesting.
+- `--site-fetch-timeout-secs` hard-limits how long a site fetch can block one ingest cycle.
+
 ### `search` - Find matching posts
 
 ```bash
@@ -275,12 +282,17 @@ Options:
   --max-cluster-size <N>        Optional cap for very large clusters
   --epsilon <F64>               Strictness threshold for cluster selection [default: 0.05]
   --allow-single-cluster        Allow a single dominant cluster
+  --projection-dims <N>         Optional sparse-random-projection target dimension
+  --projection-nnz <N>          Projection density per source dimension [default: 2]
+  --projection-seed <N>         Projection seed for reproducible runs [default: 1215765097]
 ```
 
 Notes:
 
 - Retrieval is paged (`--page-size`) to avoid large one-shot Qdrant requests.
 - `--max-points` bounds total load and runtime on smaller VPS/database setups.
+- `--projection-dims` can reduce clustering time significantly (for example: 1024 → 256 or 128) while preserving rough neighborhood structure.
+- `--projection-nnz` tunes projection quality/speed: lower is faster, higher preserves more detail.
 - Output includes per-cluster cohesion, a representative URL, and up to `--limit` sample URLs.
 - If clusters are too broad, try higher `--min-samples`, non-zero `--epsilon`, or `--max-cluster-size`.
 - Noise points are labeled `-1` by HDBSCAN.

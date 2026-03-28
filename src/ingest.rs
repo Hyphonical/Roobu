@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use futures::stream::{self, StreamExt};
 use image::DynamicImage;
 use owo_colors::OwoColorize;
@@ -18,6 +19,7 @@ pub struct IngestConfig {
 	pub poll_interval_secs: u64,
 	pub batch_size: usize,
 	pub download_concurrency: usize,
+	pub site_fetch_timeout_secs: u64,
 }
 
 struct SiteLoopState {
@@ -41,7 +43,15 @@ async fn run_cycle(
 	last_id: &mut u64,
 	context: &mut CycleContext<'_>,
 ) -> anyhow::Result<()> {
-	let posts = client.fetch_recent(*last_id).await?;
+	let fetch_timeout = Duration::from_secs(context.config.site_fetch_timeout_secs.max(1));
+	let posts = match tokio::time::timeout(fetch_timeout, client.fetch_recent(*last_id)).await {
+		Ok(fetch_result) => {
+			fetch_result.with_context(|| format!("{site}: failed to fetch recent posts"))?
+		}
+		Err(_) => {
+			anyhow::bail!("{site}: fetch timed out after {}s", fetch_timeout.as_secs())
+		}
+	};
 	let posts: Vec<Post> = posts.into_iter().filter(|p| p.passes_preflight()).collect();
 
 	if posts.is_empty() {
@@ -189,7 +199,13 @@ pub async fn run(
 	};
 
 	loop {
-		run_cycle(&client, site, &mut last_id, &mut context).await?;
+		if let Err(error) = run_cycle(&client, site, &mut last_id, &mut context).await {
+			ui_warn!(
+				"{}",
+				format!("{site} cycle failed ({error}) · skipping until next poll").as_str()
+			);
+			tracing::warn!(site, error = %error, "site ingest cycle failed; continuing");
+		}
 
 		tracing::debug!(
 			site,
@@ -252,7 +268,23 @@ pub async fn run_multi(
 			}
 
 			let cycle_start = Instant::now();
-			run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await?;
+			if let Err(error) =
+				run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await
+			{
+				ui_warn!(
+					"{}",
+					format!(
+						"{} cycle failed ({error}) · skipping this site for now",
+						state.site
+					)
+					.as_str()
+				);
+				tracing::warn!(
+					site = state.site,
+					error = %error,
+					"site ingest cycle failed in all-sites mode; continuing"
+				);
+			}
 
 			let elapsed = cycle_start.elapsed();
 			let sleep_duration = if elapsed >= per_site_target {

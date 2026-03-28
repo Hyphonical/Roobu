@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
+use anyhow::ensure;
 
 use crate::embed::{self, OnnxOptimizationIntensity};
 use crate::ingest;
@@ -17,6 +18,7 @@ pub struct Args {
 	pub poll_interval: u64,
 	pub batch_size: usize,
 	pub download_concurrency: usize,
+	pub site_fetch_timeout_secs: u64,
 	pub rule34_api_key: Option<String>,
 	pub rule34_user_id: Option<String>,
 	pub e621_login: Option<String>,
@@ -135,10 +137,16 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	let store = store::Store::new(&args.qdrant_url).await?;
 	ui_success!("Qdrant ready");
 
+	ensure!(
+		args.site_fetch_timeout_secs > 0,
+		"--site-fetch-timeout-secs must be greater than 0"
+	);
+
 	let ingest_config = ingest::IngestConfig {
 		poll_interval_secs: args.poll_interval,
 		batch_size: args.batch_size,
 		download_concurrency: args.download_concurrency,
+		site_fetch_timeout_secs: args.site_fetch_timeout_secs,
 	};
 
 	match args.site {
@@ -180,6 +188,7 @@ mod tests {
 			poll_interval: 60,
 			batch_size: 16,
 			download_concurrency: 8,
+			site_fetch_timeout_secs: 20,
 			rule34_api_key: None,
 			rule34_user_id: None,
 			e621_login: None,

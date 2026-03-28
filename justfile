@@ -8,12 +8,16 @@ set shell := ["bash", "-uc"]
 # Default recipe - build everything
 default: dev
 
+# Verify formatting before build-related tasks
+fmt:
+    cargo fmt --all --check
+
 # Development build with debug symbols and no optimizations
-dev:
+dev: fmt
     cargo build
 
 # Release build with all optimizations
-release:
+release: fmt
     cargo build --release --locked
 
 # Clean all build artifacts
@@ -21,19 +25,15 @@ clean:
     cargo clean
 
 # Run cargo check
-check:
+check: fmt
     cargo check
 
 # Run clippy linter
-lint:
+lint: fmt
     cargo clippy --all-targets --all-features
 
-# Format code
-fmt:
-    cargo fmt
-
 # Run tests
-test:
+test: fmt
     cargo test
 
 # Build the local Docker image
