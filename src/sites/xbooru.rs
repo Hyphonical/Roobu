@@ -82,6 +82,7 @@ impl RawPost {
 			rating: self.rating,
 			site: SITE_NAME,
 			site_namespace: SITE_NAMESPACE,
+			canonical_post_url: None,
 		}
 	}
 }

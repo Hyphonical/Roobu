@@ -19,6 +19,7 @@ pub struct Post {
 	pub rating: String,
 	pub site: &'static str,
 	pub site_namespace: u64,
+	pub canonical_post_url: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, Eq, PartialEq)]
@@ -75,6 +76,10 @@ pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Res
 
 impl Post {
 	pub fn post_url(&self) -> String {
+		if let Some(url) = &self.canonical_post_url {
+			return url.clone();
+		}
+
 		match self.site {
 			"rule34" => format!(
 				"https://rule34.xxx/index.php?page=post&s=view&id={}",
@@ -230,6 +235,7 @@ mod tests {
 			rating: String::new(),
 			site: "rule34",
 			site_namespace: 1,
+			canonical_post_url: None,
 		};
 		let e621 = Post {
 			id: 456,
@@ -240,6 +246,7 @@ mod tests {
 			rating: String::new(),
 			site: "e621",
 			site_namespace: 2,
+			canonical_post_url: None,
 		};
 		let safebooru = Post {
 			id: 789,
@@ -250,6 +257,7 @@ mod tests {
 			rating: String::new(),
 			site: "safebooru",
 			site_namespace: 3,
+			canonical_post_url: None,
 		};
 		let xbooru = Post {
 			id: 321,
@@ -260,6 +268,7 @@ mod tests {
 			rating: String::new(),
 			site: "xbooru",
 			site_namespace: 6,
+			canonical_post_url: None,
 		};
 		let kemono = Post {
 			id: 654,
@@ -270,6 +279,7 @@ mod tests {
 			rating: String::new(),
 			site: "kemono",
 			site_namespace: 7,
+			canonical_post_url: None,
 		};
 
 		assert_eq!(
@@ -299,6 +309,7 @@ mod tests {
 			rating: String::new(),
 			site: "rule34",
 			site_namespace: 1,
+			canonical_post_url: None,
 		};
 
 		assert_eq!(post.tags_normalized(), "unknown");

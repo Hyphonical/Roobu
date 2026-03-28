@@ -17,9 +17,7 @@ const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const DEFAULT_BASE_URL: &str = "https://kemono.cr";
-const KNOWN_BASE_URLS: [&str; 1] = [
-	"https://kemono.cr",
-];
+const KNOWN_BASE_URLS: [&str; 1] = ["https://kemono.cr"];
 
 pub struct KemonoClient {
 	http: Client,
@@ -161,6 +159,8 @@ struct RawPost {
 	#[serde(default)]
 	id: serde_json::Value,
 	#[serde(default)]
+	user: String,
+	#[serde(default)]
 	title: String,
 	#[serde(default)]
 	substring: String,
@@ -212,6 +212,7 @@ impl RawPost {
 			rating: String::new(),
 			site: SITE_NAME,
 			site_namespace: SITE_NAMESPACE,
+			canonical_post_url: build_post_url(base_url, &self.service, &self.user, id),
 		})
 	}
 }
@@ -341,6 +342,17 @@ fn synthesize_tags(title: &str, substring: &str, service: &str) -> String {
 	parts.join(" ")
 }
 
+fn build_post_url(base_url: &str, service: &str, user: &str, post_id: u64) -> Option<String> {
+	let service = service.trim();
+	let user = user.trim();
+	if service.is_empty() || user.is_empty() {
+		return None;
+	}
+
+	let clean_base = trim_trailing_slash(base_url);
+	Some(format!("{clean_base}/{service}/user/{user}/post/{post_id}"))
+}
+
 fn is_supported_image_path(path: &str) -> bool {
 	let lower = path.to_ascii_lowercase();
 	lower.ends_with(".jpg")
@@ -376,7 +388,9 @@ fn build_media_url(base_url: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-	use super::{RawPost, build_media_url, parse_id, strip_html_tags, synthesize_tags};
+	use super::{
+		RawPost, build_media_url, build_post_url, parse_id, strip_html_tags, synthesize_tags,
+	};
 
 	#[test]
 	fn parse_id_handles_string_and_number() {
@@ -415,6 +429,7 @@ mod tests {
 		let raw: RawPost = serde_json::from_str(
 			r#"{
 				"id": "123",
+				"user": "1",
 				"title": "Example",
 				"substring": "",
 				"service": "patreon",
@@ -431,5 +446,19 @@ mod tests {
 			.into_post("https://kemono.cr")
 			.expect("post should be convertible");
 		assert_eq!(post.preview_url, "https://kemono.cr/data/11/11/image.png");
+		assert_eq!(
+			post.canonical_post_url,
+			Some("https://kemono.cr/patreon/user/1/post/123".to_string())
+		);
+	}
+
+	#[test]
+	fn build_post_url_uses_service_and_user() {
+		assert_eq!(
+			build_post_url("https://kemono.cr/", "patreon", "80293853", 143811394),
+			Some("https://kemono.cr/patreon/user/80293853/post/143811394".to_string())
+		);
+		assert_eq!(build_post_url("https://kemono.cr", "", "80293853", 1), None);
+		assert_eq!(build_post_url("https://kemono.cr", "patreon", "", 1), None);
 	}
 }
