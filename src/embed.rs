@@ -166,7 +166,7 @@ impl Embedder {
 		Ok(self.embed_images(std::slice::from_ref(img))?[0])
 	}
 
-	pub fn embed_text(&self, text: &str) -> Result<[f32; EMBED_DIM], RoobuError> {
+	pub fn embed_texts(&self, texts: &[String]) -> Result<Vec<[f32; EMBED_DIM]>, RoobuError> {
 		let tokenizer = self
 			.tokenizer
 			.as_ref()
@@ -176,18 +176,19 @@ impl Embedder {
 			.as_ref()
 			.ok_or(RoobuError::ModelNotLoaded("text model"))?;
 
-		let text = if text.trim().is_empty() {
-			"unknown"
-		} else {
-			text
-		};
+		if texts.is_empty() {
+			return Err(RoobuError::EmptyBatch);
+		}
 
-		let enc = tokenizer.encode(text, true).map_err(RoobuError::from)?;
-		let mut ids: Vec<i64> = enc.get_ids().iter().map(|&x| i64::from(x)).collect();
-		ids.truncate(config::SIGLIP_TEXT_SEQ_LEN);
-		ids.resize(config::SIGLIP_TEXT_SEQ_LEN, 0);
+		let rows = texts.len();
+		let seq_len = config::SIGLIP_TEXT_SEQ_LEN;
+		let mut flat_ids: Vec<i64> = Vec::with_capacity(rows * seq_len);
 
-		let input = Array2::from_shape_vec((1, config::SIGLIP_TEXT_SEQ_LEN), ids)
+		for text in texts {
+			flat_ids.extend(encode_text_ids(tokenizer, text)?);
+		}
+
+		let input = Array2::from_shape_vec((rows, seq_len), flat_ids)
 			.map_err(|e| RoobuError::Tokenizer(e.to_string()))?;
 		let tensor = Tensor::from_array(input)?;
 
@@ -197,9 +198,37 @@ impl Embedder {
 		let outputs = session.run(inputs!["input_ids" => tensor])?;
 		let (shape, data) = outputs["pooler_output"].try_extract_tensor::<f32>()?;
 
-		expect_shape(shape, 1, EMBED_DIM)?;
-		l2_normalize(&data[..EMBED_DIM])
+		expect_shape(shape, rows, EMBED_DIM)?;
+		let cols = shape[1] as usize;
+
+		(0..rows)
+			.map(|i| {
+				let start = i * cols;
+				l2_normalize(&data[start..start + cols])
+			})
+			.collect()
 	}
+
+	pub fn embed_text(&self, text: &str) -> Result<[f32; EMBED_DIM], RoobuError> {
+		let texts = vec![text.to_string()];
+		Ok(self.embed_texts(&texts)?[0])
+	}
+}
+
+fn encode_text_ids(tokenizer: &Tokenizer, text: &str) -> Result<Vec<i64>, RoobuError> {
+	let normalized = if text.trim().is_empty() {
+		"unknown"
+	} else {
+		text
+	};
+
+	let enc = tokenizer
+		.encode(normalized, true)
+		.map_err(RoobuError::from)?;
+	let mut ids: Vec<i64> = enc.get_ids().iter().map(|&x| i64::from(x)).collect();
+	ids.truncate(config::SIGLIP_TEXT_SEQ_LEN);
+	ids.resize(config::SIGLIP_TEXT_SEQ_LEN, 0);
+	Ok(ids)
 }
 
 fn log_session_io(model_name: &str, session: &Session) {

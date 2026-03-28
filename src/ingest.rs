@@ -6,7 +6,7 @@ use anyhow::Context;
 use futures::stream::{self, StreamExt};
 use image::DynamicImage;
 use owo_colors::OwoColorize;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, mpsc};
 
 use crate::checkpoint::{self, CheckpointMap};
 use crate::embed::Embedder;
@@ -41,6 +41,8 @@ struct DownloadedBatch {
 	batch_len: usize,
 	downloaded: Vec<(Post, DynamicImage)>,
 }
+
+const DOWNLOAD_QUEUE_MAX_DEPTH: usize = 4;
 
 async fn download_batch(
 	client: &impl BooruClient,
@@ -124,17 +126,25 @@ async fn process_downloaded_batch(
 			let preprocessed: Vec<DynamicImage> = images.iter().map(Embedder::preprocess).collect();
 
 			let image_vecs = embedder_clone.embed_images(&preprocessed)?;
+			let tag_texts: Vec<String> = posts_for_embed
+				.iter()
+				.map(|post| post.tags_normalized())
+				.collect();
+			let tags_vecs = embedder_clone.embed_texts(&tag_texts)?;
 
 			let mut results = Vec::with_capacity(posts_for_embed.len());
-			for (i, post) in posts_for_embed.iter().enumerate() {
-				let tags_vec = embedder_clone.embed_text(&post.tags_normalized())?;
+			for ((post, image_vec), tags_vec) in posts_for_embed
+				.into_iter()
+				.zip(image_vecs.into_iter())
+				.zip(tags_vecs.into_iter())
+			{
 				results.push(PostEmbedding {
 					post_id: post.id,
 					site: post.site,
 					site_namespace: post.site_namespace,
 					post_url: post.post_url(),
 					rating: post.rating.clone(),
-					image_vec: image_vecs[i],
+					image_vec,
 					tags_vec,
 				});
 			}
@@ -191,26 +201,29 @@ async fn run_cycle(
 		format!("Fetched {} new posts", posts.len().bold().bright_white()).as_str()
 	);
 
-	let mut batches = posts
-		.chunks(context.config.batch_size)
-		.map(|chunk| chunk.to_vec());
-	let Some(first_batch) = batches.next() else {
-		return Ok(());
+	let batch_size = context.config.batch_size;
+	let download_concurrency = context.config.download_concurrency;
+	let queue_depth = (posts.len().div_ceil(batch_size)).clamp(1, DOWNLOAD_QUEUE_MAX_DEPTH);
+	let (tx, mut rx) = mpsc::channel::<DownloadedBatch>(queue_depth);
+
+	let producer = async {
+		for batch in posts.chunks(batch_size).map(|chunk| chunk.to_vec()) {
+			let downloaded = download_batch(client, batch, download_concurrency).await;
+			if tx.send(downloaded).await.is_err() {
+				break;
+			}
+		}
+		Ok::<(), anyhow::Error>(())
 	};
 
-	let mut current =
-		download_batch(client, first_batch, context.config.download_concurrency).await;
+	let consumer = async {
+		while let Some(downloaded) = rx.recv().await {
+			process_downloaded_batch(site, last_id, context, downloaded).await?;
+		}
+		Ok::<(), anyhow::Error>(())
+	};
 
-	for next_batch in batches {
-		let next_download = download_batch(client, next_batch, context.config.download_concurrency);
-		let process_current = process_downloaded_batch(site, last_id, context, current);
-
-		let (next, process_result) = tokio::join!(next_download, process_current);
-		process_result?;
-		current = next;
-	}
-
-	process_downloaded_batch(site, last_id, context, current).await?;
+	tokio::try_join!(producer, consumer)?;
 
 	Ok(())
 }
