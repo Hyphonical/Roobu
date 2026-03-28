@@ -37,6 +37,132 @@ struct CycleContext<'a> {
 	ckpt: &'a mut CheckpointMap,
 }
 
+struct DownloadedBatch {
+	batch_len: usize,
+	downloaded: Vec<(Post, DynamicImage)>,
+}
+
+async fn download_batch(
+	client: &impl BooruClient,
+	batch: Vec<Post>,
+	download_concurrency: usize,
+) -> DownloadedBatch {
+	let batch_len = batch.len();
+	let semaphore = Arc::new(Semaphore::new(download_concurrency));
+
+	let downloaded: Vec<(Post, DynamicImage)> = stream::iter(batch)
+		.map(|post| {
+			let sem = semaphore.clone();
+			async move {
+				let _permit = sem.acquire().await.unwrap();
+				let url = post.preview_url.clone();
+				match client.download_preview(&url).await {
+					Ok(data) => validate_downloaded_image(post.id, &data).map(|img| (post, img)),
+					Err(e) => {
+						tracing::warn!(post_id = post.id, error = %e, "download failed");
+						None
+					}
+				}
+			}
+		})
+		.buffer_unordered(download_concurrency)
+		.filter_map(|x| async { x })
+		.collect()
+		.await;
+
+	DownloadedBatch {
+		batch_len,
+		downloaded,
+	}
+}
+
+async fn process_downloaded_batch(
+	site: &'static str,
+	last_id: &mut u64,
+	context: &mut CycleContext<'_>,
+	batch: DownloadedBatch,
+) -> anyhow::Result<()> {
+	let DownloadedBatch {
+		batch_len,
+		downloaded,
+	} = batch;
+
+	if downloaded.is_empty() {
+		ui_warn!("batch had no valid images after download");
+		return Ok(());
+	}
+
+	let valid_count = downloaded.len();
+	let skipped = batch_len - valid_count;
+
+	ui_detail!(
+		"Valid",
+		"{}",
+		format!(
+			"{} images{}",
+			valid_count.bold().bright_white(),
+			if skipped > 0 {
+				format!("  ·  {} skipped", skipped)
+			} else {
+				String::new()
+			}
+		)
+		.as_str()
+	);
+
+	let posts_for_embed: Vec<Post> = downloaded.iter().map(|(p, _)| p.clone()).collect();
+	let images: Vec<DynamicImage> = downloaded.into_iter().map(|(_, img)| img).collect();
+
+	let embedder_clone = context.embedder.clone();
+	let new_last = posts_for_embed
+		.iter()
+		.map(|p| p.id)
+		.max()
+		.unwrap_or(*last_id);
+	let embeddings =
+		tokio::task::spawn_blocking(move || -> Result<Vec<PostEmbedding>, RoobuError> {
+			let preprocessed: Vec<DynamicImage> = images.iter().map(Embedder::preprocess).collect();
+
+			let image_vecs = embedder_clone.embed_images(&preprocessed)?;
+
+			let mut results = Vec::with_capacity(posts_for_embed.len());
+			for (i, post) in posts_for_embed.iter().enumerate() {
+				let tags_vec = embedder_clone.embed_text(&post.tags_normalized())?;
+				results.push(PostEmbedding {
+					post_id: post.id,
+					site: post.site,
+					site_namespace: post.site_namespace,
+					post_url: post.post_url(),
+					rating: post.rating.clone(),
+					image_vec: image_vecs[i],
+					tags_vec,
+				});
+			}
+			Ok(results)
+		})
+		.await??;
+
+	context.store.upsert(embeddings).await?;
+
+	if new_last > *last_id {
+		*last_id = new_last;
+		checkpoint::set(context.ckpt, site, *last_id);
+		checkpoint::save(context.checkpoint_path, context.ckpt)?;
+	}
+
+	ui_success!(
+		"{}",
+		format!(
+			"Upserted {} posts  ·  checkpoint {}",
+			valid_count.bold().bright_white(),
+			(*last_id).bold().bright_white()
+		)
+		.as_str()
+	);
+
+	Ok(())
+}
+
 async fn run_cycle(
 	client: &impl BooruClient,
 	site: &'static str,
@@ -65,109 +191,26 @@ async fn run_cycle(
 		format!("Fetched {} new posts", posts.len().bold().bright_white()).as_str()
 	);
 
-	for batch in posts.chunks(context.config.batch_size) {
-		let batch = batch.to_vec();
-		let batch_len = batch.len();
+	let mut batches = posts
+		.chunks(context.config.batch_size)
+		.map(|chunk| chunk.to_vec());
+	let Some(first_batch) = batches.next() else {
+		return Ok(());
+	};
 
-		let semaphore = Arc::new(Semaphore::new(context.config.download_concurrency));
-		let http_client = client;
+	let mut current =
+		download_batch(client, first_batch, context.config.download_concurrency).await;
 
-		let downloaded: Vec<(Post, DynamicImage)> = stream::iter(batch)
-			.map(|post| {
-				let sem = semaphore.clone();
-				async move {
-					let _permit = sem.acquire().await.unwrap();
-					let url = post.preview_url.clone();
-					match http_client.download_preview(&url).await {
-						Ok(data) => {
-							validate_downloaded_image(post.id, &data).map(|img| (post, img))
-						}
-						Err(e) => {
-							tracing::warn!(post_id = post.id, error = %e, "download failed");
-							None
-						}
-					}
-				}
-			})
-			.buffer_unordered(context.config.download_concurrency)
-			.filter_map(|x| async { x })
-			.collect()
-			.await;
+	for next_batch in batches {
+		let next_download = download_batch(client, next_batch, context.config.download_concurrency);
+		let process_current = process_downloaded_batch(site, last_id, context, current);
 
-		if downloaded.is_empty() {
-			ui_warn!("batch had no valid images after download");
-			continue;
-		}
-
-		let valid_count = downloaded.len();
-		let skipped = batch_len - valid_count;
-
-		ui_detail!(
-			"Valid",
-			"{}",
-			format!(
-				"{} images{}",
-				valid_count.bold().bright_white(),
-				if skipped > 0 {
-					format!("  ·  {} skipped", skipped)
-				} else {
-					String::new()
-				}
-			)
-			.as_str()
-		);
-
-		let posts_for_embed: Vec<Post> = downloaded.iter().map(|(p, _)| p.clone()).collect();
-		let images: Vec<DynamicImage> = downloaded.into_iter().map(|(_, img)| img).collect();
-
-		let embedder_clone = context.embedder.clone();
-		let new_last = posts_for_embed
-			.iter()
-			.map(|p| p.id)
-			.max()
-			.unwrap_or(*last_id);
-		let embeddings =
-			tokio::task::spawn_blocking(move || -> Result<Vec<PostEmbedding>, RoobuError> {
-				let preprocessed: Vec<DynamicImage> =
-					images.iter().map(Embedder::preprocess).collect();
-
-				let image_vecs = embedder_clone.embed_images(&preprocessed)?;
-
-				let mut results = Vec::with_capacity(posts_for_embed.len());
-				for (i, post) in posts_for_embed.iter().enumerate() {
-					let tags_vec = embedder_clone.embed_text(&post.tags_normalized())?;
-					results.push(PostEmbedding {
-						post_id: post.id,
-						site: post.site,
-						site_namespace: post.site_namespace,
-						post_url: post.post_url(),
-						rating: post.rating.clone(),
-						image_vec: image_vecs[i],
-						tags_vec,
-					});
-				}
-				Ok(results)
-			})
-			.await??;
-
-		context.store.upsert(embeddings).await?;
-
-		if new_last > *last_id {
-			*last_id = new_last;
-			checkpoint::set(context.ckpt, site, *last_id);
-			checkpoint::save(context.checkpoint_path, context.ckpt)?;
-		}
-
-		ui_success!(
-			"{}",
-			format!(
-				"Upserted {} posts  ·  checkpoint {}",
-				valid_count.bold().bright_white(),
-				(*last_id).bold().bright_white()
-			)
-			.as_str()
-		);
+		let (next, process_result) = tokio::join!(next_download, process_current);
+		process_result?;
+		current = next;
 	}
+
+	process_downloaded_batch(site, last_id, context, current).await?;
 
 	Ok(())
 }
