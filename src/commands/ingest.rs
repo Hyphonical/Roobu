@@ -87,6 +87,10 @@ fn build_all_sites_clients(args: &Args) -> anyhow::Result<Vec<sites::SiteClient>
 		site_credentials(args),
 	)?);
 	clients.push(sites::build_client(
+		sites::SiteKind::Civitai,
+		site_credentials(args),
+	)?);
+	clients.push(sites::build_client(
 		sites::SiteKind::E6Ai,
 		site_credentials(args),
 	)?);
@@ -216,6 +220,7 @@ mod tests {
 				"kemono",
 				"aibooru",
 				"danbooru",
+				"civitai",
 				"e6ai",
 				"konachan",
 				"yandere"
@@ -242,6 +247,7 @@ mod tests {
 				"kemono",
 				"aibooru",
 				"danbooru",
+				"civitai",
 				"e6ai",
 				"konachan",
 				"yandere"
@@ -267,6 +273,7 @@ mod tests {
 				"kemono",
 				"aibooru",
 				"danbooru",
+				"civitai",
 				"e6ai",
 				"konachan",
 				"yandere",

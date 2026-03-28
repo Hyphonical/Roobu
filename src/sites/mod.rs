@@ -1,4 +1,5 @@
 pub mod aibooru;
+pub mod civitai;
 pub mod danbooru;
 pub mod e621;
 pub mod e6ai;
@@ -37,6 +38,7 @@ pub enum SiteKind {
 	Kemono,
 	Aibooru,
 	Danbooru,
+	Civitai,
 	#[value(name = "e6ai")]
 	E6Ai,
 	Gelbooru,
@@ -63,6 +65,7 @@ pub enum SiteClient {
 	Kemono(kemono::KemonoClient),
 	Aibooru(aibooru::AibooruClient),
 	Danbooru(danbooru::DanbooruClient),
+	Civitai(civitai::CivitaiClient),
 	E6Ai(e6ai::E6AiClient),
 	Gelbooru(gelbooru::GelbooruClient),
 	Konachan(konachan::KonachanClient),
@@ -94,6 +97,7 @@ pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Res
 		)?)),
 		SiteKind::Aibooru => Ok(SiteClient::Aibooru(aibooru::AibooruClient::new()?)),
 		SiteKind::Danbooru => Ok(SiteClient::Danbooru(danbooru::DanbooruClient::new()?)),
+		SiteKind::Civitai => Ok(SiteClient::Civitai(civitai::CivitaiClient::new()?)),
 		SiteKind::E6Ai => Ok(SiteClient::E6Ai(e6ai::E6AiClient::new()?)),
 		SiteKind::Gelbooru => {
 			let api_key = credentials.gelbooru_api_key.context(
@@ -139,6 +143,7 @@ impl Post {
 			"kemono" => format!("https://kemono.cr/posts/{}", self.id),
 			"aibooru" => format!("https://aibooru.online/posts/{}", self.id),
 			"danbooru" => format!("https://danbooru.donmai.us/posts/{}", self.id),
+			"civitai" => format!("https://civitai.com/images/{}", self.id),
 			"konachan" => format!("https://konachan.com/post/show/{}", self.id),
 			"yandere" => format!("https://yande.re/post/show/{}", self.id),
 			_ => format!("https://unknown/?id={}", self.id),
@@ -212,6 +217,7 @@ impl BooruClient for SiteClient {
 			SiteClient::Kemono(client) => client.site_name(),
 			SiteClient::Aibooru(client) => client.site_name(),
 			SiteClient::Danbooru(client) => client.site_name(),
+			SiteClient::Civitai(client) => client.site_name(),
 			SiteClient::E6Ai(client) => client.site_name(),
 			SiteClient::Gelbooru(client) => client.site_name(),
 			SiteClient::Konachan(client) => client.site_name(),
@@ -228,6 +234,7 @@ impl BooruClient for SiteClient {
 			SiteClient::Kemono(client) => client.fetch_recent(last_id).await,
 			SiteClient::Aibooru(client) => client.fetch_recent(last_id).await,
 			SiteClient::Danbooru(client) => client.fetch_recent(last_id).await,
+			SiteClient::Civitai(client) => client.fetch_recent(last_id).await,
 			SiteClient::E6Ai(client) => client.fetch_recent(last_id).await,
 			SiteClient::Gelbooru(client) => client.fetch_recent(last_id).await,
 			SiteClient::Konachan(client) => client.fetch_recent(last_id).await,
@@ -244,6 +251,7 @@ impl BooruClient for SiteClient {
 			SiteClient::Kemono(client) => client.download_preview(url).await,
 			SiteClient::Aibooru(client) => client.download_preview(url).await,
 			SiteClient::Danbooru(client) => client.download_preview(url).await,
+			SiteClient::Civitai(client) => client.download_preview(url).await,
 			SiteClient::E6Ai(client) => client.download_preview(url).await,
 			SiteClient::Gelbooru(client) => client.download_preview(url).await,
 			SiteClient::Konachan(client) => client.download_preview(url).await,
@@ -311,6 +319,7 @@ mod tests {
 		let kemono = make_post(654, "kemono", 7);
 		let aibooru = make_post(777, "aibooru", 8);
 		let danbooru = make_post(888, "danbooru", 5);
+		let civitai = make_post(333, "civitai", 12);
 		let e6ai = make_post(999, "e6ai", 9);
 		let gelbooru = make_post(444, "gelbooru", 4);
 		let konachan = make_post(111, "konachan", 10);
@@ -332,6 +341,7 @@ mod tests {
 		assert_eq!(kemono.post_url(), "https://kemono.cr/posts/654");
 		assert_eq!(aibooru.post_url(), "https://aibooru.online/posts/777");
 		assert_eq!(danbooru.post_url(), "https://danbooru.donmai.us/posts/888");
+		assert_eq!(civitai.post_url(), "https://civitai.com/images/333");
 		assert_eq!(e6ai.post_url(), "https://e6ai.net/posts/999");
 		assert_eq!(
 			gelbooru.post_url(),

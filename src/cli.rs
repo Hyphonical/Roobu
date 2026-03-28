@@ -21,7 +21,7 @@ pub enum Commands {
 		#[arg(
 			long,
 			value_enum,
-			help = "Site to ingest from (rule34, e621, safebooru, xbooru, kemono, aibooru, danbooru, e6ai, gelbooru, konachan, or yandere). If omitted, ingests supported sites sequentially"
+			help = "Site to ingest from (rule34, e621, safebooru, xbooru, kemono, aibooru, danbooru, civitai, e6ai, gelbooru, konachan, or yandere). If omitted, ingests supported sites sequentially"
 		)]
 		site: Option<SiteKind>,
 
