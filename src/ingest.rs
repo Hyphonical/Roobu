@@ -42,7 +42,14 @@ struct DownloadedBatch {
 	downloaded: Vec<(Post, DynamicImage)>,
 }
 
+struct EmbeddedBatch {
+	valid_count: usize,
+	new_last: u64,
+	embeddings: Vec<PostEmbedding>,
+}
+
 const DOWNLOAD_QUEUE_MAX_DEPTH: usize = 4;
+const EMBEDDING_QUEUE_MAX_DEPTH: usize = 4;
 
 async fn download_batch(
 	client: &impl BooruClient,
@@ -78,12 +85,10 @@ async fn download_batch(
 	}
 }
 
-async fn process_downloaded_batch(
-	site: &'static str,
-	last_id: &mut u64,
-	context: &mut CycleContext<'_>,
+async fn embed_downloaded_batch(
+	embedder: &Arc<Embedder>,
 	batch: DownloadedBatch,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<EmbeddedBatch>> {
 	let DownloadedBatch {
 		batch_len,
 		downloaded,
@@ -91,7 +96,7 @@ async fn process_downloaded_batch(
 
 	if downloaded.is_empty() {
 		ui_warn!("batch had no valid images after download");
-		return Ok(());
+		return Ok(None);
 	}
 
 	let valid_count = downloaded.len();
@@ -115,12 +120,8 @@ async fn process_downloaded_batch(
 	let posts_for_embed: Vec<Post> = downloaded.iter().map(|(p, _)| p.clone()).collect();
 	let images: Vec<DynamicImage> = downloaded.into_iter().map(|(_, img)| img).collect();
 
-	let embedder_clone = context.embedder.clone();
-	let new_last = posts_for_embed
-		.iter()
-		.map(|p| p.id)
-		.max()
-		.unwrap_or(*last_id);
+	let embedder_clone = embedder.clone();
+	let new_last = posts_for_embed.iter().map(|p| p.id).max().unwrap_or(0);
 	let embeddings =
 		tokio::task::spawn_blocking(move || -> Result<Vec<PostEmbedding>, RoobuError> {
 			let preprocessed: Vec<DynamicImage> = images.iter().map(Embedder::preprocess).collect();
@@ -152,6 +153,25 @@ async fn process_downloaded_batch(
 			Ok(results)
 		})
 		.await??;
+
+	Ok(Some(EmbeddedBatch {
+		valid_count,
+		new_last,
+		embeddings,
+	}))
+}
+
+async fn process_embedded_batch(
+	site: &'static str,
+	last_id: &mut u64,
+	context: &mut CycleContext<'_>,
+	batch: EmbeddedBatch,
+) -> anyhow::Result<()> {
+	let EmbeddedBatch {
+		valid_count,
+		new_last,
+		embeddings,
+	} = batch;
 
 	context.store.upsert(embeddings).await?;
 
@@ -204,28 +224,51 @@ async fn run_cycle(
 
 	let batch_size = context.config.batch_size;
 	let download_concurrency = context.config.download_concurrency;
-	let queue_depth = (posts.len().div_ceil(batch_size)).clamp(1, DOWNLOAD_QUEUE_MAX_DEPTH);
-	let (tx, mut rx) = mpsc::channel::<DownloadedBatch>(queue_depth);
+	if batch_size == 0 {
+		anyhow::bail!("{site}: batch size must be greater than 0")
+	}
+	if download_concurrency == 0 {
+		anyhow::bail!("{site}: download concurrency must be greater than 0")
+	}
+
+	let download_queue_depth =
+		(posts.len().div_ceil(batch_size)).clamp(1, DOWNLOAD_QUEUE_MAX_DEPTH);
+	let embedding_queue_depth =
+		(posts.len().div_ceil(batch_size)).clamp(1, EMBEDDING_QUEUE_MAX_DEPTH);
+	let (download_tx, mut download_rx) = mpsc::channel::<DownloadedBatch>(download_queue_depth);
+	let (embedding_tx, mut embedding_rx) = mpsc::channel::<EmbeddedBatch>(embedding_queue_depth);
 
 	// Move sender ownership into the producer so channel closure is observable by the consumer.
 	let producer = async move {
 		for batch in posts.chunks(batch_size).map(|chunk| chunk.to_vec()) {
 			let downloaded = download_batch(client, batch, download_concurrency).await;
-			if tx.send(downloaded).await.is_err() {
+			if download_tx.send(downloaded).await.is_err() {
 				break;
 			}
 		}
 		Ok::<(), anyhow::Error>(())
 	};
 
-	let consumer = async {
-		while let Some(downloaded) = rx.recv().await {
-			process_downloaded_batch(site, last_id, context, downloaded).await?;
+	let embedder = context.embedder.clone();
+	let embed_stage = async move {
+		while let Some(downloaded) = download_rx.recv().await {
+			if let Some(embedded) = embed_downloaded_batch(&embedder, downloaded).await? {
+				if embedding_tx.send(embedded).await.is_err() {
+					break;
+				}
+			}
 		}
 		Ok::<(), anyhow::Error>(())
 	};
 
-	tokio::try_join!(producer, consumer)?;
+	let upsert_stage = async {
+		while let Some(embedded) = embedding_rx.recv().await {
+			process_embedded_batch(site, last_id, context, embedded).await?;
+		}
+		Ok::<(), anyhow::Error>(())
+	};
+
+	tokio::try_join!(producer, embed_stage, upsert_stage)?;
 
 	Ok(())
 }

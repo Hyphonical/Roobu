@@ -1,6 +1,7 @@
 use owo_colors::OwoColorize;
 use std::fmt;
 
+#[allow(dead_code)]
 pub fn header(label: &str) {
 	let width: usize = 56;
 	let inner = format!("── {} ", label);
@@ -9,18 +10,22 @@ pub fn header(label: &str) {
 	println!("\n{}\n", line.dimmed());
 }
 
+#[allow(dead_code)]
 pub fn step(msg: fmt::Arguments<'_>) {
 	println!("{} {}", "●".cyan().bold(), msg);
 }
 
+#[allow(dead_code)]
 pub fn detail(label: &str, value: fmt::Arguments<'_>) {
 	println!("  {} {label:<9}{}", "·".dimmed(), value);
 }
 
+#[allow(dead_code)]
 pub fn success(msg: fmt::Arguments<'_>) {
 	println!("{} {}", "✓".green(), msg);
 }
 
+#[allow(dead_code)]
 pub fn warn(msg: fmt::Arguments<'_>) {
 	println!("{} {}", "⚠".yellow(), msg);
 }

@@ -145,6 +145,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		args.site_fetch_timeout_secs > 0,
 		"--site-fetch-timeout-secs must be greater than 0"
 	);
+	ensure!(args.batch_size > 0, "--batch-size must be greater than 0");
+	ensure!(
+		args.download_concurrency > 0,
+		"--download-concurrency must be greater than 0"
+	);
 
 	let ingest_config = ingest::IngestConfig {
 		poll_interval_secs: args.poll_interval,
@@ -178,6 +183,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 mod tests {
 	use std::path::PathBuf;
 
+	use crate::config;
 	use crate::embed::OnnxOptimizationIntensity;
 	use crate::sites::BooruClient;
 
@@ -190,7 +196,7 @@ mod tests {
 			models_dir: PathBuf::from("models"),
 			checkpoint: PathBuf::from("checkpoint.json"),
 			poll_interval: 60,
-			batch_size: 16,
+			batch_size: config::DEFAULT_BATCH_SIZE,
 			download_concurrency: 8,
 			site_fetch_timeout_secs: 20,
 			rule34_api_key: None,
