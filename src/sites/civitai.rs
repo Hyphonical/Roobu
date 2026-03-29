@@ -219,6 +219,30 @@ fn rewrite_to_cached_thumbnail_url(url: &str) -> Option<String> {
 	))
 }
 
+fn rewrite_cached_thumbnail_to_original_url(url: &str) -> Option<String> {
+	let parsed = reqwest::Url::parse(url).ok()?;
+	let segments: Vec<&str> = parsed.path_segments()?.collect();
+
+	let variant = segments.last()?.trim();
+	let is_our_variant = variant.eq_ignore_ascii_case("450x%3cauto%3e_so")
+		|| variant.eq_ignore_ascii_case("450x<auto>_so");
+	if !is_our_variant {
+		return None;
+	}
+
+	let cache_idx = segments
+		.iter()
+		.position(|segment| *segment == "civitai-media-cache")?;
+	let asset_id = segments.get(cache_idx + 1)?.trim();
+	if asset_id.is_empty() {
+		return None;
+	}
+
+	Some(format!(
+		"https://image-b2.civitai.com/file/civitai-media-cache/{asset_id}/original"
+	))
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct RawMeta {
 	#[serde(default)]
@@ -253,9 +277,30 @@ impl BooruClient for CivitaiClient {
 	}
 
 	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
-		let resp = self.http.get(url).send().await?.error_for_status()?;
-		let bytes = resp.bytes().await?;
-		Ok(bytes)
+		let resp = self.http.get(url).send().await?;
+		if resp.status().is_success() {
+			return Ok(resp.bytes().await?);
+		}
+
+		if resp.status() == reqwest::StatusCode::NOT_FOUND
+			&& let Some(fallback_url) = rewrite_cached_thumbnail_to_original_url(url)
+		{
+			tracing::debug!(
+				url,
+				fallback_url,
+				"civitai thumbnail 404; retrying original"
+			);
+			let fallback_resp = self
+				.http
+				.get(&fallback_url)
+				.send()
+				.await?
+				.error_for_status()?;
+			return Ok(fallback_resp.bytes().await?);
+		}
+
+		let resp = resp.error_for_status()?;
+		Ok(resp.bytes().await?)
 	}
 }
 
@@ -319,7 +364,10 @@ fn push_unique(tags: &mut Vec<String>, value: &str) {
 
 #[cfg(test)]
 mod tests {
-	use super::{CivitaiClient, RawImage, rewrite_to_cached_thumbnail_url};
+	use super::{
+		CivitaiClient, RawImage, rewrite_cached_thumbnail_to_original_url,
+		rewrite_to_cached_thumbnail_url,
+	};
 
 	#[test]
 	fn into_post_builds_tags_and_maps_soft_rating() {
@@ -496,6 +544,40 @@ mod tests {
 	fn rewrite_to_cached_thumbnail_ignores_non_original_urls() {
 		let original = "https://image.civitai.com/example.png";
 		let rewritten = rewrite_to_cached_thumbnail_url(original);
+
+		assert!(rewritten.is_none());
+	}
+
+	#[test]
+	fn rewrite_cached_thumbnail_to_original_handles_encoded_variant() {
+		let thumb = "https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/450x%3Cauto%3E_so";
+		let rewritten = rewrite_cached_thumbnail_to_original_url(thumb);
+
+		assert_eq!(
+			rewritten.as_deref(),
+			Some(
+				"https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/original"
+			)
+		);
+	}
+
+	#[test]
+	fn rewrite_cached_thumbnail_to_original_handles_decoded_variant() {
+		let thumb = "https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/450x<auto>_so";
+		let rewritten = rewrite_cached_thumbnail_to_original_url(thumb);
+
+		assert_eq!(
+			rewritten.as_deref(),
+			Some(
+				"https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/original"
+			)
+		);
+	}
+
+	#[test]
+	fn rewrite_cached_thumbnail_to_original_ignores_other_variants() {
+		let thumb = "https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/original";
+		let rewritten = rewrite_cached_thumbnail_to_original_url(thumb);
 
 		assert!(rewritten.is_none());
 	}
