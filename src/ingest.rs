@@ -206,7 +206,8 @@ async fn run_cycle(
 	let queue_depth = (posts.len().div_ceil(batch_size)).clamp(1, DOWNLOAD_QUEUE_MAX_DEPTH);
 	let (tx, mut rx) = mpsc::channel::<DownloadedBatch>(queue_depth);
 
-	let producer = async {
+	// Move sender ownership into the producer so channel closure is observable by the consumer.
+	let producer = async move {
 		for batch in posts.chunks(batch_size).map(|chunk| chunk.to_vec()) {
 			let downloaded = download_batch(client, batch, download_concurrency).await;
 			if tx.send(downloaded).await.is_err() {
