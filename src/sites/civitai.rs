@@ -77,6 +77,10 @@ impl CivitaiClient {
 		for item in items {
 			match serde_json::from_value::<RawImage>(item.clone()) {
 				Ok(raw_image) => {
+					if !raw_image.is_image_candidate() {
+						continue;
+					}
+
 					let post = raw_image.into_post();
 					if post.id > last_id {
 						posts.push(post);
@@ -109,6 +113,8 @@ struct RawImage {
 	id: u64,
 	#[serde(default)]
 	url: Option<String>,
+	#[serde(default, rename = "type")]
+	media_type: Option<String>,
 	#[serde(default)]
 	width: Option<u32>,
 	#[serde(default)]
@@ -126,10 +132,34 @@ struct RawImage {
 }
 
 impl RawImage {
+	fn is_image_candidate(&self) -> bool {
+		if self
+			.media_type
+			.as_deref()
+			.is_some_and(|kind| !kind.eq_ignore_ascii_case("image"))
+		{
+			return false;
+		}
+
+		if let Some(url) = self.url.as_deref() {
+			let lower = url.to_ascii_lowercase();
+			if lower.ends_with(".mp4")
+				|| lower.ends_with(".webm")
+				|| lower.contains(".mp4?")
+				|| lower.contains(".webm?")
+			{
+				return false;
+			}
+		}
+
+		true
+	}
+
 	fn into_post(self) -> Post {
 		let RawImage {
 			id,
 			url,
+			media_type: _,
 			width,
 			height,
 			nsfw_level,
@@ -262,7 +292,7 @@ fn push_unique(tags: &mut Vec<String>, value: &str) {
 
 #[cfg(test)]
 mod tests {
-	use super::RawImage;
+	use super::{CivitaiClient, RawImage};
 
 	#[test]
 	fn into_post_builds_tags_and_maps_soft_rating() {
@@ -377,5 +407,35 @@ mod tests {
 		assert_eq!(post.height, 0);
 		assert!(post.tags.contains("artist"));
 		assert!(post.tags.contains("model"));
+	}
+
+	#[test]
+	fn parse_posts_skips_video_items() {
+		let client = CivitaiClient::new().expect("client should build");
+		let body = r#"{
+			"items": [
+				{
+					"id": 10,
+					"url": "https://image.civitai.com/example.jpeg",
+					"type": "image",
+					"nsfwLevel": "Soft",
+					"nsfw": true
+				},
+				{
+					"id": 11,
+					"url": "https://image.civitai.com/example.mp4",
+					"type": "video",
+					"nsfwLevel": "X",
+					"nsfw": true
+				}
+			]
+		}"#;
+
+		let posts = client
+			.parse_posts_from_body(body, 0)
+			.expect("payload should parse");
+
+		assert_eq!(posts.len(), 1);
+		assert_eq!(posts[0].id, 10);
 	}
 }

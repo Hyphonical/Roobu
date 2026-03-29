@@ -133,7 +133,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 				"  {}    {}  {}",
 				format!("#{}", r.post_id).bright_white().bold(),
 				format!("{percent:.2}%").dimmed(),
-				r.post_url.cyan(),
+				r.post_url.cyan()
 			);
 		}
 		println!();
