@@ -22,6 +22,7 @@ pub struct Post {
 	pub id: u64,
 	pub tags: String,
 	pub thumbnail_url: String,
+	pub direct_image_url: Option<String>,
 	pub width: u32,
 	pub height: u32,
 	pub rating: String,
@@ -165,6 +166,12 @@ impl Post {
 		!self.thumbnail_url.is_empty()
 	}
 
+	pub fn preferred_image_url(&self) -> String {
+		self.direct_image_url
+			.clone()
+			.unwrap_or_else(|| self.thumbnail_url.clone())
+	}
+
 	pub fn aspect_ratio_from_dims(w: u32, h: u32) -> Option<f32> {
 		if w == 0 && h == 0 {
 			return None;
@@ -302,6 +309,7 @@ mod tests {
 			id,
 			tags: String::new(),
 			thumbnail_url: String::new(),
+			direct_image_url: None,
 			width: 0,
 			height: 0,
 			rating: String::new(),

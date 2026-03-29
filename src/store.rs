@@ -31,6 +31,10 @@ pub struct PostEmbedding {
 	pub site_namespace: u64,
 	pub post_url: String,
 	pub thumbnail_url: String,
+	pub direct_image_url: String,
+	pub width: u32,
+	pub height: u32,
+	pub ingestion_date: i64,
 	pub rating: String,
 	pub image_vec: [f32; EMBED_DIM],
 	pub tags_vec: [f32; EMBED_DIM],
@@ -115,6 +119,17 @@ impl Store {
 			)
 			.await?;
 
+		self.client
+			.create_field_index(
+				CreateFieldIndexCollectionBuilder::new(
+					config::QDRANT_COLLECTION,
+					"ingestion_date",
+					FieldType::Integer,
+				)
+				.wait(true),
+			)
+			.await?;
+
 		ui_success!("Collection ready");
 		Ok(())
 	}
@@ -140,6 +155,16 @@ impl Store {
 					(
 						"thumbnail_url".to_string(),
 						serde_json::json!(e.thumbnail_url),
+					),
+					(
+						"direct_image_url".to_string(),
+						serde_json::json!(e.direct_image_url),
+					),
+					("width".to_string(), serde_json::json!(e.width as i64)),
+					("height".to_string(), serde_json::json!(e.height as i64)),
+					(
+						"ingestion_date".to_string(),
+						serde_json::json!(e.ingestion_date),
 					),
 					("rating".to_string(), serde_json::json!(e.rating)),
 				]
@@ -253,41 +278,41 @@ impl Store {
 					continue;
 				};
 
-				let post_url = point
-					.payload
-					.get("post_url")
-					.and_then(|v| v.as_str())
-					.map_or("", |v| v)
-					.to_string();
-				let thumbnail_url = point
-					.payload
-					.get("thumbnail_url")
-					.and_then(|v| v.as_str())
-					.map_or("", |v| v)
-					.to_string();
+				let post_url = payload_string(&point.payload, "post_url");
+				let thumbnail_url = payload_string(&point.payload, "thumbnail_url");
+				let direct_image_url = payload_string(&point.payload, "direct_image_url");
+				let width = payload_u32(&point.payload, "width");
+				let height = payload_u32(&point.payload, "height");
+				let ingestion_date = payload_i64(&point.payload, "ingestion_date");
 				let (_, raw_post_id) = decode_point_id(*point_id);
 
 				let entry = merged.entry(*point_id).or_insert_with(|| SearchResult {
 					post_id: raw_post_id,
 					post_url,
 					thumbnail_url,
+					direct_image_url,
+					width,
+					height,
+					ingestion_date,
 					score: 0.0,
 				});
 				if entry.post_url.is_empty() {
-					entry.post_url = point
-						.payload
-						.get("post_url")
-						.and_then(|v| v.as_str())
-						.map_or("", |v| v)
-						.to_string();
+					entry.post_url = payload_string(&point.payload, "post_url");
 				}
 				if entry.thumbnail_url.is_empty() {
-					entry.thumbnail_url = point
-						.payload
-						.get("thumbnail_url")
-						.and_then(|v| v.as_str())
-						.map_or("", |v| v)
-						.to_string();
+					entry.thumbnail_url = payload_string(&point.payload, "thumbnail_url");
+				}
+				if entry.direct_image_url.is_empty() {
+					entry.direct_image_url = payload_string(&point.payload, "direct_image_url");
+				}
+				if entry.width == 0 {
+					entry.width = payload_u32(&point.payload, "width");
+				}
+				if entry.height == 0 {
+					entry.height = payload_u32(&point.payload, "height");
+				}
+				if entry.ingestion_date == 0 {
+					entry.ingestion_date = payload_i64(&point.payload, "ingestion_date");
 				}
 
 				entry.score += weight * point.score;
@@ -298,6 +323,11 @@ impl Store {
 		merge_points(tags_points, tags_weight);
 
 		let mut results: Vec<SearchResult> = merged.into_values().collect();
+		for result in &mut results {
+			if result.direct_image_url.is_empty() {
+				result.direct_image_url = result.thumbnail_url.clone();
+			}
+		}
 		results.sort_by(|a, b| {
 			b.score
 				.partial_cmp(&a.score)
@@ -468,6 +498,10 @@ pub struct SearchResult {
 	pub post_id: u64,
 	pub post_url: String,
 	pub thumbnail_url: String,
+	pub direct_image_url: String,
+	pub width: u32,
+	pub height: u32,
+	pub ingestion_date: i64,
 	pub score: f32,
 }
 
@@ -497,6 +531,58 @@ fn extract_named_dense_vector(
 		vector_output::Vector::Dense(dense) => Some(dense.data.clone()),
 		vector_output::Vector::Sparse(_) | vector_output::Vector::MultiDense(_) => None,
 	}
+}
+
+fn payload_string(
+	payload: &std::collections::HashMap<String, qdrant_client::qdrant::Value>,
+	key: &str,
+) -> String {
+	payload
+		.get(key)
+		.and_then(|value| match value.kind.as_ref() {
+			Some(qdrant_client::qdrant::value::Kind::StringValue(v)) => Some(v.clone()),
+			Some(qdrant_client::qdrant::value::Kind::IntegerValue(v)) => Some(v.to_string()),
+			Some(qdrant_client::qdrant::value::Kind::DoubleValue(v)) => Some(v.to_string()),
+			Some(qdrant_client::qdrant::value::Kind::BoolValue(v)) => Some(v.to_string()),
+			_ => None,
+		})
+		.unwrap_or_default()
+}
+
+fn payload_u32(
+	payload: &std::collections::HashMap<String, qdrant_client::qdrant::Value>,
+	key: &str,
+) -> u32 {
+	payload
+		.get(key)
+		.and_then(|value| match value.kind.as_ref() {
+			Some(qdrant_client::qdrant::value::Kind::IntegerValue(v)) => u32::try_from(*v).ok(),
+			Some(qdrant_client::qdrant::value::Kind::DoubleValue(v)) => {
+				if *v >= 0.0 && *v <= u32::MAX as f64 {
+					Some(*v as u32)
+				} else {
+					None
+				}
+			}
+			Some(qdrant_client::qdrant::value::Kind::StringValue(v)) => v.parse::<u32>().ok(),
+			_ => None,
+		})
+		.unwrap_or_default()
+}
+
+fn payload_i64(
+	payload: &std::collections::HashMap<String, qdrant_client::qdrant::Value>,
+	key: &str,
+) -> i64 {
+	payload
+		.get(key)
+		.and_then(|value| match value.kind.as_ref() {
+			Some(qdrant_client::qdrant::value::Kind::IntegerValue(v)) => Some(*v),
+			Some(qdrant_client::qdrant::value::Kind::DoubleValue(v)) => Some(*v as i64),
+			Some(qdrant_client::qdrant::value::Kind::StringValue(v)) => v.parse::<i64>().ok(),
+			_ => None,
+		})
+		.unwrap_or_default()
 }
 
 #[cfg(test)]

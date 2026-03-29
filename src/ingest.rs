@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
@@ -163,6 +163,10 @@ async fn embed_downloaded_batch(
 
 	let embedder_clone = embedder.clone();
 	let new_last = posts_for_embed.iter().map(|p| p.id).max().unwrap_or(0);
+	let ingestion_date = SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.map(|d| d.as_secs() as i64)
+		.unwrap_or_default();
 	let embeddings =
 		tokio::task::spawn_blocking(move || -> Result<Vec<PostEmbedding>, RoobuError> {
 			let preprocessed: Vec<DynamicImage> = images.iter().map(Embedder::preprocess).collect();
@@ -186,6 +190,10 @@ async fn embed_downloaded_batch(
 					site_namespace: post.site_namespace,
 					post_url: post.post_url(),
 					thumbnail_url: post.thumbnail_url.clone(),
+					direct_image_url: post.preferred_image_url(),
+					width: post.width,
+					height: post.height,
+					ingestion_date,
 					rating: post.rating.clone(),
 					image_vec,
 					tags_vec,

@@ -103,12 +103,14 @@ impl RawPost {
 			height,
 			url: file_url,
 		} = self.file;
+		let direct_image_url = file_url.clone().or(self.sample.url.clone());
 		let thumbnail_url = first_url_or_empty([self.preview.url, self.sample.url, file_url]);
 
 		Post {
 			id: self.id,
 			tags: self.tags.into_tag_string(),
 			thumbnail_url,
+			direct_image_url,
 			width,
 			height,
 			rating: self.rating,

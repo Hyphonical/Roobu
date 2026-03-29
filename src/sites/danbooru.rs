@@ -79,6 +79,7 @@ struct RawPost {
 
 impl RawPost {
 	fn into_post(self) -> Post {
+		let direct_image_url = self.file_url.clone().or(self.large_file_url.clone());
 		let thumbnail_url =
 			first_url_or_empty([self.preview_file_url, self.large_file_url, self.file_url]);
 
@@ -86,6 +87,7 @@ impl RawPost {
 			id: self.id,
 			tags: self.tag_string,
 			thumbnail_url,
+			direct_image_url,
 			width: self.image_width,
 			height: self.image_height,
 			rating: self.rating,

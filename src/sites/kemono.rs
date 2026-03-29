@@ -207,12 +207,17 @@ impl RawPost {
 				.map(|path| build_media_url(base_url, path)),
 		]);
 
+		let direct_image_url = original_media_path
+			.as_deref()
+			.map(|path| build_media_url(base_url, path));
+
 		let tags = synthesize_tags(&self.title, &self.substring, &self.service);
 
 		Some(Post {
 			id,
 			tags,
 			thumbnail_url,
+			direct_image_url,
 			width: 0,
 			height: 0,
 			rating: String::new(),

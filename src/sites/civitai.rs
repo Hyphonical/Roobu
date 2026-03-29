@@ -171,6 +171,7 @@ impl RawImage {
 
 		let fallback_page_url = format!("https://civitai.com/images/{id}");
 		let normalized_url = normalize_url(url);
+		let direct_image_url = normalized_url.clone();
 		let thumbnail_url = first_url_or_empty([
 			normalized_url
 				.as_deref()
@@ -188,6 +189,7 @@ impl RawImage {
 			id,
 			tags: build_tags(&username, &base_model, &meta),
 			thumbnail_url,
+			direct_image_url,
 			width: width.unwrap_or_default(),
 			height: height.unwrap_or_default(),
 			rating: rating_from_nsfw(nsfw, &nsfw_level),
