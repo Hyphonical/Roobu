@@ -249,6 +249,22 @@ pub enum Commands {
 		)]
 		projection_seed: u64,
 	},
+
+	Stats {
+		#[arg(
+			long,
+			env = "QDRANT_URL",
+			default_value = config::DEFAULT_QDRANT_URL,
+			help = "Qdrant gRPC endpoint URL"
+		)]
+		qdrant_url: String,
+
+		#[arg(long, default_value_t = config::DEFAULT_STATS_PAGE_SIZE, help = "Qdrant scroll page size used while counting points")]
+		page_size: u32,
+
+		#[arg(long, default_value_t = config::DEFAULT_STATS_BAR_WIDTH, help = "Maximum width of ASCII bars in terminal output")]
+		width: usize,
+	},
 }
 
 #[cfg(test)]
@@ -256,6 +272,7 @@ mod tests {
 	use clap::Parser;
 
 	use super::{Cli, Commands};
+	use crate::config;
 	use crate::sites::SiteKind;
 
 	#[test]
@@ -287,6 +304,24 @@ mod tests {
 		match cli.command {
 			Commands::Ingest { site, .. } => assert_eq!(site, Some(SiteKind::E6Ai)),
 			_ => panic!("expected ingest command"),
+		}
+	}
+
+	#[test]
+	fn stats_command_parses_with_defaults() {
+		let cli = Cli::try_parse_from(["roobu", "stats"]).expect("stats args should parse");
+
+		match cli.command {
+			Commands::Stats {
+				qdrant_url,
+				page_size,
+				width,
+			} => {
+				assert_eq!(qdrant_url, config::DEFAULT_QDRANT_URL);
+				assert_eq!(page_size, config::DEFAULT_STATS_PAGE_SIZE);
+				assert_eq!(width, config::DEFAULT_STATS_BAR_WIDTH);
+			}
+			_ => panic!("expected stats command"),
 		}
 	}
 }

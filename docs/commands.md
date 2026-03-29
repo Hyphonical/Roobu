@@ -158,6 +158,32 @@ Cluster validates ranges for size, epsilon, dimensions, and projection settings 
 - representative post URL
 - preview member URLs
 
+## stats
+
+Shows all-time indexed corpus distribution per site.
+
+### Key Options
+
+- --qdrant-url
+  - Qdrant gRPC endpoint.
+- --page-size
+  - Qdrant scroll page size while counting points.
+- --width
+  - Maximum width of the ASCII bars in terminal output.
+
+### Output
+
+- total indexed posts
+- number of sites represented
+- per-site raw count
+- per-site percentage of total
+- horizontal ASCII bars for visual comparison
+- leader and trailing site summary
+
+### Example
+
+- roobu stats --qdrant-url http://localhost:6334
+
 ## Operational Guidance
 
 - Start with ingest and let it run long enough to build a healthy index.

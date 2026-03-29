@@ -1,6 +1,7 @@
 mod cluster;
 mod ingest;
 mod search;
+mod stats;
 
 use crate::cli;
 
@@ -97,6 +98,18 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 				projection_dims,
 				projection_nnz,
 				projection_seed,
+			})
+			.await
+		}
+		cli::Commands::Stats {
+			qdrant_url,
+			page_size,
+			width,
+		} => {
+			stats::run(stats::Args {
+				qdrant_url,
+				page_size,
+				width,
 			})
 			.await
 		}
