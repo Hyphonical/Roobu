@@ -59,7 +59,7 @@ CivitAI currently resolves post URLs as:
 Site adapters should provide enough metadata for preflight filtering to work well:
 
 - id must be stable and increasing (or at least comparable against checkpoint logic)
-- preview_url should be non-empty for downloadable content
+- thumbnail_url should be non-empty for downloadable content
 - width and height should be provided when available
 - rating should be mapped to a stable representation when possible
 - tags should include meaningful searchable text
@@ -70,7 +70,7 @@ All adapters implement the shared trait with two async operations:
 
 - fetch_recent(last_id)
   - returns new posts above checkpoint
-- download_preview(url)
-  - downloads bytes for preview image validation + embedding
+- download_thumbnail(url)
+  - downloads bytes for thumbnail image validation + embedding
 
 This keeps ingest generic while allowing each site module to customize API calls, parsing, and retry behavior.

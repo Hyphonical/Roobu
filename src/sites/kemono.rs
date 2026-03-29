@@ -6,6 +6,7 @@ use std::sync::RwLock;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use super::common::first_url_or_empty;
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -175,20 +176,12 @@ struct RawPost {
 impl RawPost {
 	fn into_post(self, base_url: &str) -> Option<Post> {
 		let id = parse_id(&self.id)?;
-		let media_path = self
+		let original_media_path = self
 			.file
 			.path
 			.as_deref()
 			.filter(|path| is_supported_image_path(path))
 			.map(ToOwned::to_owned)
-			.or_else(|| {
-				self.file
-					.thumbnail
-					.as_ref()
-					.and_then(|thumb| thumb.path.as_deref())
-					.filter(|path| is_supported_image_path(path))
-					.map(ToOwned::to_owned)
-			})
 			.or_else(|| {
 				self.attachments.iter().find_map(|attachment| {
 					let path = attachment.path.as_deref()?;
@@ -196,17 +189,30 @@ impl RawPost {
 				})
 			});
 
-		let preview_url = media_path
-			.as_deref()
-			.map(|path| build_media_url(base_url, path))
-			.unwrap_or_default();
+		let preview_media_path = self
+			.file
+			.thumbnail
+			.as_ref()
+			.and_then(|thumb| thumb.path.as_deref())
+			.filter(|path| is_supported_image_path(path))
+			.map(ToOwned::to_owned)
+			.or_else(|| original_media_path.clone());
+
+		let thumbnail_url = first_url_or_empty([
+			preview_media_path
+				.as_deref()
+				.map(|path| build_media_url(base_url, path)),
+			original_media_path
+				.as_deref()
+				.map(|path| build_media_url(base_url, path)),
+		]);
 
 		let tags = synthesize_tags(&self.title, &self.substring, &self.service);
 
 		Some(Post {
 			id,
 			tags,
-			preview_url,
+			thumbnail_url,
 			width: 0,
 			height: 0,
 			rating: String::new(),
@@ -266,7 +272,7 @@ impl BooruClient for KemonoClient {
 		}))
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		let req = self.with_optional_session_cookie(self.http.get(url));
 		let resp = req.send().await?.error_for_status()?;
 		let bytes = resp.bytes().await?;
@@ -445,7 +451,7 @@ mod tests {
 		let post = raw
 			.into_post("https://kemono.cr")
 			.expect("post should be convertible");
-		assert_eq!(post.preview_url, "https://kemono.cr/data/11/11/image.png");
+		assert_eq!(post.thumbnail_url, "https://kemono.cr/data/11/11/image.png");
 		assert_eq!(
 			post.canonical_post_url,
 			Some("https://kemono.cr/patreon/user/1/post/123".to_string())

@@ -57,8 +57,8 @@ async fn download_batch(
 			let sem = semaphore.clone();
 			async move {
 				let _permit = sem.acquire().await.unwrap();
-				let url = post.preview_url.clone();
-				match client.download_preview(&url).await {
+				let url = post.thumbnail_url.clone();
+				match client.download_thumbnail(&url).await {
 					Ok(data) => validate_downloaded_image(post.id, &data).map(|img| (post, img)),
 					Err(e) => {
 						tracing::warn!(post_id = post.id, error = %e, "download failed");
@@ -143,6 +143,7 @@ async fn process_downloaded_batch(
 					site: post.site,
 					site_namespace: post.site_namespace,
 					post_url: post.post_url(),
+					thumbnail_url: post.thumbnail_url.clone(),
 					rating: post.rating.clone(),
 					image_vec,
 					tags_vec,

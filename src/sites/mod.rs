@@ -1,5 +1,6 @@
 pub mod aibooru;
 pub mod civitai;
+mod common;
 pub mod danbooru;
 pub mod e621;
 pub mod e6ai;
@@ -20,7 +21,7 @@ use crate::error::RoobuError;
 pub struct Post {
 	pub id: u64,
 	pub tags: String,
-	pub preview_url: String,
+	pub thumbnail_url: String,
 	pub width: u32,
 	pub height: u32,
 	pub rating: String,
@@ -160,8 +161,8 @@ impl Post {
 		}
 	}
 
-	pub fn has_preview(&self) -> bool {
-		!self.preview_url.is_empty()
+	pub fn has_thumbnail(&self) -> bool {
+		!self.thumbnail_url.is_empty()
 	}
 
 	pub fn aspect_ratio_from_dims(w: u32, h: u32) -> Option<f32> {
@@ -181,7 +182,7 @@ impl Post {
 	}
 
 	pub fn passes_preflight(&self) -> bool {
-		if !self.has_preview() {
+		if !self.has_thumbnail() {
 			return false;
 		}
 		if let Some(ratio) = self.aspect_ratio()
@@ -201,7 +202,7 @@ pub trait BooruClient: Send + Sync {
 		&self,
 		last_id: u64,
 	) -> impl Future<Output = Result<Vec<Post>, RoobuError>> + Send;
-	fn download_preview(
+	fn download_thumbnail(
 		&self,
 		url: &str,
 	) -> impl Future<Output = Result<bytes::Bytes, RoobuError>> + Send;
@@ -242,20 +243,20 @@ impl BooruClient for SiteClient {
 		}
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		match self {
-			SiteClient::Rule34(client) => client.download_preview(url).await,
-			SiteClient::E621(client) => client.download_preview(url).await,
-			SiteClient::Safebooru(client) => client.download_preview(url).await,
-			SiteClient::Xbooru(client) => client.download_preview(url).await,
-			SiteClient::Kemono(client) => client.download_preview(url).await,
-			SiteClient::Aibooru(client) => client.download_preview(url).await,
-			SiteClient::Danbooru(client) => client.download_preview(url).await,
-			SiteClient::Civitai(client) => client.download_preview(url).await,
-			SiteClient::E6Ai(client) => client.download_preview(url).await,
-			SiteClient::Gelbooru(client) => client.download_preview(url).await,
-			SiteClient::Konachan(client) => client.download_preview(url).await,
-			SiteClient::Yandere(client) => client.download_preview(url).await,
+			SiteClient::Rule34(client) => client.download_thumbnail(url).await,
+			SiteClient::E621(client) => client.download_thumbnail(url).await,
+			SiteClient::Safebooru(client) => client.download_thumbnail(url).await,
+			SiteClient::Xbooru(client) => client.download_thumbnail(url).await,
+			SiteClient::Kemono(client) => client.download_thumbnail(url).await,
+			SiteClient::Aibooru(client) => client.download_thumbnail(url).await,
+			SiteClient::Danbooru(client) => client.download_thumbnail(url).await,
+			SiteClient::Civitai(client) => client.download_thumbnail(url).await,
+			SiteClient::E6Ai(client) => client.download_thumbnail(url).await,
+			SiteClient::Gelbooru(client) => client.download_thumbnail(url).await,
+			SiteClient::Konachan(client) => client.download_thumbnail(url).await,
+			SiteClient::Yandere(client) => client.download_thumbnail(url).await,
 		}
 	}
 }
@@ -300,7 +301,7 @@ mod tests {
 		Post {
 			id,
 			tags: String::new(),
-			preview_url: String::new(),
+			thumbnail_url: String::new(),
 			width: 0,
 			height: 0,
 			rating: String::new(),

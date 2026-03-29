@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use super::common::first_url_or_empty;
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -100,6 +101,10 @@ struct RawPost {
 	#[serde(default)]
 	preview_url: String,
 	#[serde(default)]
+	file_url: Option<String>,
+	#[serde(default)]
+	sample_url: Option<String>,
+	#[serde(default)]
 	width: serde_json::Value,
 	#[serde(default)]
 	height: serde_json::Value,
@@ -109,10 +114,13 @@ struct RawPost {
 
 impl RawPost {
 	fn into_post(self) -> Option<Post> {
+		let thumbnail_url =
+			first_url_or_empty([Some(self.preview_url), self.sample_url, self.file_url]);
+
 		Some(Post {
 			id: parse_u64(&self.id)?,
 			tags: self.tags,
-			preview_url: self.preview_url,
+			thumbnail_url,
 			width: parse_u32(&self.width),
 			height: parse_u32(&self.height),
 			rating: self.rating,
@@ -165,7 +173,7 @@ impl BooruClient for GelbooruClient {
 		Ok(posts)
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		let resp = self.http.get(url).send().await?.error_for_status()?;
 		let bytes = resp.bytes().await?;
 		Ok(bytes)
@@ -217,6 +225,6 @@ mod tests {
 		assert_eq!(post.id, 456);
 		assert_eq!(post.width, 640);
 		assert_eq!(post.height, 480);
-		assert_eq!(post.preview_url, "https://img.test/456.jpg");
+		assert_eq!(post.thumbnail_url, "https://img.test/456.jpg");
 	}
 }

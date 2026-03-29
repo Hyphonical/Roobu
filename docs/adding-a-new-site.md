@@ -40,7 +40,7 @@ Implement for your client:
 
 - site_name
 - fetch_recent(last_id)
-- download_preview(url)
+- download_thumbnail(url)
 
 Behavioral expectations:
 
@@ -64,7 +64,7 @@ Update all of the following:
 6. Extend SiteClient dispatch matches for:
    - site_name
    - fetch_recent
-   - download_preview
+  - download_thumbnail
 
 Important:
 
@@ -156,7 +156,7 @@ impl BooruClient for ExampleClient {
         /* ... */
     }
 
-    async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+    async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
         /* ... */
     }
 }

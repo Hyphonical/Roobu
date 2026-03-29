@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use super::common::first_url_or_empty;
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -80,15 +81,17 @@ struct RawPost {
 
 impl RawPost {
 	fn into_post(self) -> Post {
+		let thumbnail_url = first_url_or_empty([
+			self.preview_url,
+			self.sample_url,
+			self.jpeg_url,
+			self.file_url,
+		]);
+
 		Post {
 			id: self.id,
 			tags: self.tags,
-			preview_url: self
-				.preview_url
-				.or(self.sample_url)
-				.or(self.jpeg_url)
-				.or(self.file_url)
-				.unwrap_or_default(),
+			thumbnail_url,
 			width: self.width,
 			height: self.height,
 			rating: self.rating,
@@ -124,7 +127,7 @@ impl BooruClient for YandereClient {
 		Ok(posts)
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		let resp = self.http.get(url).send().await?.error_for_status()?;
 		let bytes = resp.bytes().await?;
 		Ok(bytes)
@@ -153,6 +156,6 @@ mod tests {
 		.expect("valid raw post json");
 
 		let post = raw.into_post();
-		assert_eq!(post.preview_url, "https://yande.re/jpeg.jpg");
+		assert_eq!(post.thumbnail_url, "https://yande.re/jpeg.jpg");
 	}
 }

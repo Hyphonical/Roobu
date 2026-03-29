@@ -53,7 +53,7 @@ Each ingested post carries:
 
 - post id
 - site identifier and site namespace id
-- preview URL (used for download)
+- thumbnail URL (used for download)
 - tags string
 - rating
 - optional canonical post URL
@@ -68,6 +68,7 @@ At upsert time, each point stores:
   - post_id
   - site
   - post_url
+  - thumbnail_url
   - rating
 
 ## Point ID Strategy
@@ -86,8 +87,8 @@ This allows the same post id number to exist across multiple sites without colli
 - Load checkpoint for that site.
 - Repeat forever:
   - fetch recent posts newer than checkpoint
-  - preflight filter (has preview URL, aspect ratio gate)
-  - download previews with bounded concurrency
+  - preflight filter (has thumbnail URL, aspect ratio gate)
+  - download thumbnails with bounded concurrency
   - decode/size/aspect validation
   - batch embed image and tags vectors
   - upsert to Qdrant

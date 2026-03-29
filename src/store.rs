@@ -30,6 +30,7 @@ pub struct PostEmbedding {
 	pub site: &'static str,
 	pub site_namespace: u64,
 	pub post_url: String,
+	pub thumbnail_url: String,
 	pub rating: String,
 	pub image_vec: [f32; EMBED_DIM],
 	pub tags_vec: [f32; EMBED_DIM],
@@ -136,6 +137,10 @@ impl Store {
 					("post_id".to_string(), serde_json::json!(e.post_id as i64)),
 					("site".to_string(), serde_json::json!(e.site)),
 					("post_url".to_string(), serde_json::json!(e.post_url)),
+					(
+						"thumbnail_url".to_string(),
+						serde_json::json!(e.thumbnail_url),
+					),
 					("rating".to_string(), serde_json::json!(e.rating)),
 				]
 				.into_iter()
@@ -235,59 +240,62 @@ impl Store {
 		let mut merged: std::collections::HashMap<u64, SearchResult> =
 			std::collections::HashMap::new();
 
-		for point in image_points {
-			let Some(id) = point
-				.id
-				.as_ref()
-				.and_then(|pid| pid.point_id_options.as_ref())
-			else {
-				continue;
-			};
-			let qdrant_client::qdrant::point_id::PointIdOptions::Num(point_id) = id else {
-				continue;
-			};
-			let post_url = point
-				.payload
-				.get("post_url")
-				.and_then(|v| v.as_str())
-				.map_or("", |v| v)
-				.to_string();
-			let (_, raw_post_id) = decode_point_id(*point_id);
+		let mut merge_points = |points: Vec<qdrant_client::qdrant::ScoredPoint>, weight: f32| {
+			for point in points {
+				let Some(id) = point
+					.id
+					.as_ref()
+					.and_then(|pid| pid.point_id_options.as_ref())
+				else {
+					continue;
+				};
+				let qdrant_client::qdrant::point_id::PointIdOptions::Num(point_id) = id else {
+					continue;
+				};
 
-			let entry = merged.entry(*point_id).or_insert_with(|| SearchResult {
-				post_id: raw_post_id,
-				post_url,
-				score: 0.0,
-			});
-			entry.score += image_weight * point.score;
-		}
+				let post_url = point
+					.payload
+					.get("post_url")
+					.and_then(|v| v.as_str())
+					.map_or("", |v| v)
+					.to_string();
+				let thumbnail_url = point
+					.payload
+					.get("thumbnail_url")
+					.and_then(|v| v.as_str())
+					.map_or("", |v| v)
+					.to_string();
+				let (_, raw_post_id) = decode_point_id(*point_id);
 
-		for point in tags_points {
-			let Some(id) = point
-				.id
-				.as_ref()
-				.and_then(|pid| pid.point_id_options.as_ref())
-			else {
-				continue;
-			};
-			let qdrant_client::qdrant::point_id::PointIdOptions::Num(point_id) = id else {
-				continue;
-			};
-			let post_url = point
-				.payload
-				.get("post_url")
-				.and_then(|v| v.as_str())
-				.map_or("", |v| v)
-				.to_string();
-			let (_, raw_post_id) = decode_point_id(*point_id);
+				let entry = merged.entry(*point_id).or_insert_with(|| SearchResult {
+					post_id: raw_post_id,
+					post_url,
+					thumbnail_url,
+					score: 0.0,
+				});
+				if entry.post_url.is_empty() {
+					entry.post_url = point
+						.payload
+						.get("post_url")
+						.and_then(|v| v.as_str())
+						.map_or("", |v| v)
+						.to_string();
+				}
+				if entry.thumbnail_url.is_empty() {
+					entry.thumbnail_url = point
+						.payload
+						.get("thumbnail_url")
+						.and_then(|v| v.as_str())
+						.map_or("", |v| v)
+						.to_string();
+				}
 
-			let entry = merged.entry(*point_id).or_insert_with(|| SearchResult {
-				post_id: raw_post_id,
-				post_url,
-				score: 0.0,
-			});
-			entry.score += tags_weight * point.score;
-		}
+				entry.score += weight * point.score;
+			}
+		};
+
+		merge_points(image_points, image_weight);
+		merge_points(tags_points, tags_weight);
 
 		let mut results: Vec<SearchResult> = merged.into_values().collect();
 		results.sort_by(|a, b| {
@@ -459,6 +467,7 @@ impl Store {
 pub struct SearchResult {
 	pub post_id: u64,
 	pub post_url: String,
+	pub thumbnail_url: String,
 	pub score: f32,
 }
 

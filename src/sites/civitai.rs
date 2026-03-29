@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use super::common::{first_url_or_empty, normalize_url};
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -139,16 +140,8 @@ impl RawImage {
 		} = self;
 
 		let fallback_page_url = format!("https://civitai.com/images/{id}");
-		let preview_url = url
-			.and_then(|value| {
-				let trimmed = value.trim();
-				if trimmed.is_empty() {
-					None
-				} else {
-					Some(trimmed.to_string())
-				}
-			})
-			.unwrap_or_else(|| fallback_page_url.clone());
+		let thumbnail_url =
+			first_url_or_empty([normalize_url(url), Some(fallback_page_url.clone())]);
 
 		let meta = meta.unwrap_or_default();
 		let username = username.unwrap_or_default();
@@ -158,7 +151,7 @@ impl RawImage {
 		Post {
 			id,
 			tags: build_tags(&username, &base_model, &meta),
-			preview_url,
+			thumbnail_url,
 			width: width.unwrap_or_default(),
 			height: height.unwrap_or_default(),
 			rating: rating_from_nsfw(nsfw, &nsfw_level),
@@ -202,7 +195,7 @@ impl BooruClient for CivitaiClient {
 		Ok(posts)
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		let resp = self.http.get(url).send().await?.error_for_status()?;
 		let bytes = resp.bytes().await?;
 		Ok(bytes)
@@ -301,7 +294,7 @@ mod tests {
 
 		assert_eq!(post.rating, "q");
 		assert_eq!(
-			post.preview_url,
+			post.thumbnail_url,
 			"https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/706a7ed9-bbac-4ade-89e1-a40694524396/original=true/706a7ed9-bbac-4ade-89e1-a40694524396.jpeg"
 		);
 		assert_eq!(post.width, 840);
@@ -334,7 +327,7 @@ mod tests {
 
 		let post = raw.into_post();
 		assert_eq!(post.rating, "e");
-		assert_eq!(post.preview_url, "https://civitai.com/images/77");
+		assert_eq!(post.thumbnail_url, "https://civitai.com/images/77");
 	}
 
 	#[test]
@@ -355,7 +348,7 @@ mod tests {
 		.expect("valid civitai image json");
 
 		let post = raw.into_post();
-		assert_eq!(post.preview_url, "https://image.civitai.com/example.png");
+		assert_eq!(post.thumbnail_url, "https://image.civitai.com/example.png");
 		assert_eq!(post.rating, "s");
 		assert_eq!(post.tags, "");
 	}

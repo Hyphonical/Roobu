@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use super::common::first_url_or_empty;
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -85,16 +86,12 @@ impl RawPost {
 			height,
 			url: file_url,
 		} = self.file;
+		let thumbnail_url = first_url_or_empty([self.preview.url, self.sample.url, file_url]);
 
 		Post {
 			id: self.id,
 			tags: self.tags.into_tag_string(),
-			preview_url: self
-				.preview
-				.url
-				.or(self.sample.url)
-				.or(file_url)
-				.unwrap_or_default(),
+			thumbnail_url,
 			width,
 			height,
 			rating: self.rating,
@@ -191,7 +188,7 @@ impl BooruClient for E6AiClient {
 		Ok(posts)
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		let resp = self.http.get(url).send().await?.error_for_status()?;
 		let bytes = resp.bytes().await?;
 		Ok(bytes)
@@ -228,7 +225,7 @@ mod tests {
 
 		let post = raw.into_post();
 
-		assert_eq!(post.preview_url, "https://sample.test/sample.jpg");
+		assert_eq!(post.thumbnail_url, "https://sample.test/sample.jpg");
 		assert_eq!(post.tags, "blue_eyes someone");
 		assert_eq!(post.width, 640);
 		assert_eq!(post.height, 480);

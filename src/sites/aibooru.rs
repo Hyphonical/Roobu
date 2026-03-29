@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use super::common::first_url_or_empty;
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -78,14 +79,13 @@ struct RawPost {
 
 impl RawPost {
 	fn into_post(self) -> Post {
+		let thumbnail_url =
+			first_url_or_empty([self.preview_file_url, self.large_file_url, self.file_url]);
+
 		Post {
 			id: self.id,
 			tags: self.tag_string,
-			preview_url: self
-				.preview_file_url
-				.or(self.large_file_url)
-				.or(self.file_url)
-				.unwrap_or_default(),
+			thumbnail_url,
 			width: self.image_width,
 			height: self.image_height,
 			rating: self.rating,
@@ -121,7 +121,7 @@ impl BooruClient for AibooruClient {
 		Ok(posts)
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		let resp = self.http.get(url).send().await?.error_for_status()?;
 		let bytes = resp.bytes().await?;
 		Ok(bytes)
@@ -149,7 +149,7 @@ mod tests {
 		.expect("valid raw post json");
 
 		let post = raw.into_post();
-		assert_eq!(post.preview_url, "https://cdn.test/preview.jpg");
+		assert_eq!(post.thumbnail_url, "https://cdn.test/preview.jpg");
 		assert_eq!(post.tags, "test_tag");
 		assert_eq!(post.width, 1920);
 		assert_eq!(post.height, 1080);
@@ -172,6 +172,6 @@ mod tests {
 		.expect("valid raw post json");
 
 		let post = raw.into_post();
-		assert_eq!(post.preview_url, "https://cdn.test/file-only.jpg");
+		assert_eq!(post.thumbnail_url, "https://cdn.test/file-only.jpg");
 	}
 }

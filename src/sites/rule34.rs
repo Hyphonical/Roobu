@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use super::common::first_url_or_empty;
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -73,6 +74,10 @@ struct RawPost {
 	#[serde(default)]
 	preview_url: String,
 	#[serde(default)]
+	file_url: Option<String>,
+	#[serde(default)]
+	sample_url: Option<String>,
+	#[serde(default)]
 	width: u32,
 	#[serde(default)]
 	height: u32,
@@ -82,10 +87,13 @@ struct RawPost {
 
 impl RawPost {
 	fn into_post(self) -> Post {
+		let thumbnail_url =
+			first_url_or_empty([Some(self.preview_url), self.sample_url, self.file_url]);
+
 		Post {
 			id: self.id,
 			tags: self.tags,
-			preview_url: self.preview_url,
+			thumbnail_url,
 			width: self.width,
 			height: self.height,
 			rating: self.rating,
@@ -121,7 +129,7 @@ impl BooruClient for Rule34Client {
 		Ok(posts)
 	}
 
-	async fn download_preview(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
+	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		let resp = self.http.get(url).send().await?.error_for_status()?;
 		let bytes = resp.bytes().await?;
 		Ok(bytes)
