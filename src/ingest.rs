@@ -44,8 +44,49 @@ struct DownloadedBatch {
 
 struct EmbeddedBatch {
 	valid_count: usize,
+	skipped_count: usize,
 	new_last: u64,
 	embeddings: Vec<PostEmbedding>,
+}
+
+struct CycleStats {
+	fetched_posts: usize,
+	valid_images: usize,
+	skipped_images: usize,
+	upserted_posts: usize,
+	batch_count: usize,
+	elapsed: Duration,
+}
+
+impl CycleStats {
+	fn empty(elapsed: Duration) -> Self {
+		Self {
+			fetched_posts: 0,
+			valid_images: 0,
+			skipped_images: 0,
+			upserted_posts: 0,
+			batch_count: 0,
+			elapsed,
+		}
+	}
+
+	fn posts_per_second(&self) -> f64 {
+		let secs = self.elapsed.as_secs_f64();
+		if self.upserted_posts == 0 || secs <= f64::EPSILON {
+			0.0
+		} else {
+			self.upserted_posts as f64 / secs
+		}
+	}
+
+	fn seconds_per_post(&self) -> f64 {
+		let secs = self.elapsed.as_secs_f64();
+		if self.upserted_posts == 0 || secs <= f64::EPSILON {
+			0.0
+		} else {
+			secs / self.upserted_posts as f64
+		}
+	}
 }
 
 const DOWNLOAD_QUEUE_MAX_DEPTH: usize = 4;
@@ -156,6 +197,7 @@ async fn embed_downloaded_batch(
 
 	Ok(Some(EmbeddedBatch {
 		valid_count,
+		skipped_count: skipped,
 		new_last,
 		embeddings,
 	}))
@@ -171,6 +213,7 @@ async fn process_embedded_batch(
 		valid_count,
 		new_last,
 		embeddings,
+		..
 	} = batch;
 
 	context.store.upsert(embeddings).await?;
@@ -194,12 +237,41 @@ async fn process_embedded_batch(
 	Ok(())
 }
 
+fn format_elapsed(duration: Duration) -> String {
+	format!("{:.2}s", duration.as_secs_f64())
+}
+
+fn print_cycle_stats(stats: &CycleStats) {
+	ui_detail!(
+		"Cycle",
+		"{} total  ·  {} upserted  ·  {} posts/s  ·  {} s/post",
+		format_elapsed(stats.elapsed).bold().bright_white(),
+		stats.upserted_posts.bold().bright_white(),
+		format!("{:.2}", stats.posts_per_second())
+			.bold()
+			.bright_white(),
+		format!("{:.3}", stats.seconds_per_post())
+			.bold()
+			.bright_white()
+	);
+
+	ui_detail!(
+		"Totals",
+		"{} fetched  ·  {} valid  ·  {} skipped  ·  {} batches",
+		stats.fetched_posts.bold().bright_white(),
+		stats.valid_images.bold().bright_white(),
+		stats.skipped_images.bold().bright_white(),
+		stats.batch_count.bold().bright_white()
+	);
+}
+
 async fn run_cycle(
 	client: &impl BooruClient,
 	site: &'static str,
 	last_id: &mut u64,
 	context: &mut CycleContext<'_>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<CycleStats> {
+	let cycle_start = Instant::now();
 	let fetch_timeout = Duration::from_secs(context.config.site_fetch_timeout_secs.max(1));
 	let posts = match tokio::time::timeout(fetch_timeout, client.fetch_recent(*last_id)).await {
 		Ok(fetch_result) => {
@@ -214,7 +286,7 @@ async fn run_cycle(
 	if posts.is_empty() {
 		ui_step!("{}", "No new posts");
 		tracing::debug!(site, "no new posts");
-		return Ok(());
+		return Ok(CycleStats::empty(cycle_start.elapsed()));
 	}
 
 	ui_step!(
@@ -231,10 +303,13 @@ async fn run_cycle(
 		anyhow::bail!("{site}: download concurrency must be greater than 0")
 	}
 
+	let fetched_posts = posts.len();
+	let batch_count = fetched_posts.div_ceil(batch_size);
+
 	let download_queue_depth =
-		(posts.len().div_ceil(batch_size)).clamp(1, DOWNLOAD_QUEUE_MAX_DEPTH);
+		(fetched_posts.div_ceil(batch_size)).clamp(1, DOWNLOAD_QUEUE_MAX_DEPTH);
 	let embedding_queue_depth =
-		(posts.len().div_ceil(batch_size)).clamp(1, EMBEDDING_QUEUE_MAX_DEPTH);
+		(fetched_posts.div_ceil(batch_size)).clamp(1, EMBEDDING_QUEUE_MAX_DEPTH);
 	let (download_tx, mut download_rx) = mpsc::channel::<DownloadedBatch>(download_queue_depth);
 	let (embedding_tx, mut embedding_rx) = mpsc::channel::<EmbeddedBatch>(embedding_queue_depth);
 
@@ -252,25 +327,43 @@ async fn run_cycle(
 	let embedder = context.embedder.clone();
 	let embed_stage = async move {
 		while let Some(downloaded) = download_rx.recv().await {
-			if let Some(embedded) = embed_downloaded_batch(&embedder, downloaded).await? {
-				if embedding_tx.send(embedded).await.is_err() {
-					break;
-				}
+			if let Some(embedded) = embed_downloaded_batch(&embedder, downloaded).await?
+				&& embedding_tx.send(embedded).await.is_err()
+			{
+				break;
 			}
 		}
 		Ok::<(), anyhow::Error>(())
 	};
 
 	let upsert_stage = async {
+		let mut valid_images = 0usize;
+		let mut skipped_images = 0usize;
+		let mut upserted_posts = 0usize;
+
 		while let Some(embedded) = embedding_rx.recv().await {
+			let valid_count = embedded.valid_count;
+			let skipped_count = embedded.skipped_count;
 			process_embedded_batch(site, last_id, context, embedded).await?;
+			valid_images += valid_count;
+			skipped_images += skipped_count;
+			upserted_posts += valid_count;
 		}
-		Ok::<(), anyhow::Error>(())
+
+		Ok::<(usize, usize, usize), anyhow::Error>((valid_images, skipped_images, upserted_posts))
 	};
 
-	tokio::try_join!(producer, embed_stage, upsert_stage)?;
+	let (_, _, (valid_images, skipped_images, upserted_posts)) =
+		tokio::try_join!(producer, embed_stage, upsert_stage)?;
 
-	Ok(())
+	Ok(CycleStats {
+		fetched_posts,
+		valid_images,
+		skipped_images,
+		upserted_posts,
+		batch_count,
+		elapsed: cycle_start.elapsed(),
+	})
 }
 
 pub async fn run(
@@ -300,18 +393,28 @@ pub async fn run(
 	};
 
 	loop {
-		if let Err(error) = run_cycle(&client, site, &mut last_id, &mut context).await {
-			let error_chain = format!("{error:#}");
-			ui_warn!(
-				"{}",
-				format!("{site} cycle failed ({error_chain}) · skipping until next poll").as_str()
-			);
-			tracing::warn!(
-				site,
-				error = %error,
-				error_chain = %error_chain,
-				"site ingest cycle failed; continuing"
-			);
+		let cycle_start = Instant::now();
+		match run_cycle(&client, site, &mut last_id, &mut context).await {
+			Ok(stats) => print_cycle_stats(&stats),
+			Err(error) => {
+				let elapsed = cycle_start.elapsed();
+				let error_chain = format!("{error:#}");
+				ui_warn!(
+					"{}",
+					format!(
+						"{site} cycle failed ({error_chain}) after {} · skipping until next poll",
+						format_elapsed(elapsed)
+					)
+					.as_str()
+				);
+				tracing::warn!(
+					site,
+					error = %error,
+					error_chain = %error_chain,
+					elapsed_secs = elapsed.as_secs_f64(),
+					"site ingest cycle failed; continuing"
+				);
+			}
 		}
 
 		tracing::debug!(
@@ -375,24 +478,28 @@ pub async fn run_multi(
 			}
 
 			let cycle_start = Instant::now();
-			if let Err(error) =
-				run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await
-			{
-				let error_chain = format!("{error:#}");
-				ui_warn!(
-					"{}",
-					format!(
-						"{} cycle failed ({error_chain}) · skipping this site for now",
-						state.site
-					)
-					.as_str()
-				);
-				tracing::warn!(
-					site = state.site,
-					error = %error,
-					error_chain = %error_chain,
-					"site ingest cycle failed in all-sites mode; continuing"
-				);
+			match run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await {
+				Ok(stats) => print_cycle_stats(&stats),
+				Err(error) => {
+					let elapsed = cycle_start.elapsed();
+					let error_chain = format!("{error:#}");
+					ui_warn!(
+						"{}",
+						format!(
+							"{} cycle failed ({error_chain}) after {} · skipping this site for now",
+							state.site,
+							format_elapsed(elapsed)
+						)
+						.as_str()
+					);
+					tracing::warn!(
+						site = state.site,
+						error = %error,
+						error_chain = %error_chain,
+						elapsed_secs = elapsed.as_secs_f64(),
+						"site ingest cycle failed in all-sites mode; continuing"
+					);
+				}
 			}
 
 			let elapsed = cycle_start.elapsed();
