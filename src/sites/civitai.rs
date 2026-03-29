@@ -170,8 +170,14 @@ impl RawImage {
 		} = self;
 
 		let fallback_page_url = format!("https://civitai.com/images/{id}");
-		let thumbnail_url =
-			first_url_or_empty([normalize_url(url), Some(fallback_page_url.clone())]);
+		let normalized_url = normalize_url(url);
+		let thumbnail_url = first_url_or_empty([
+			normalized_url
+				.as_deref()
+				.and_then(rewrite_to_cached_thumbnail_url),
+			normalized_url,
+			Some(fallback_page_url.clone()),
+		]);
 
 		let meta = meta.unwrap_or_default();
 		let username = username.unwrap_or_default();
@@ -190,6 +196,27 @@ impl RawImage {
 			canonical_post_url: Some(fallback_page_url),
 		}
 	}
+}
+
+fn rewrite_to_cached_thumbnail_url(url: &str) -> Option<String> {
+	let parsed = reqwest::Url::parse(url).ok()?;
+	let segments: Vec<&str> = parsed.path_segments()?.collect();
+	let original_idx = segments
+		.iter()
+		.position(|segment| *segment == "original=true" || *segment == "original")?;
+
+	if original_idx == 0 {
+		return None;
+	}
+
+	let asset_id = segments.get(original_idx - 1)?.trim();
+	if asset_id.is_empty() {
+		return None;
+	}
+
+	Some(format!(
+		"https://image-b2.civitai.com/file/civitai-media-cache/{asset_id}/450x%3Cauto%3E_so"
+	))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -292,7 +319,7 @@ fn push_unique(tags: &mut Vec<String>, value: &str) {
 
 #[cfg(test)]
 mod tests {
-	use super::{CivitaiClient, RawImage};
+	use super::{CivitaiClient, RawImage, rewrite_to_cached_thumbnail_url};
 
 	#[test]
 	fn into_post_builds_tags_and_maps_soft_rating() {
@@ -325,7 +352,7 @@ mod tests {
 		assert_eq!(post.rating, "q");
 		assert_eq!(
 			post.thumbnail_url,
-			"https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/706a7ed9-bbac-4ade-89e1-a40694524396/original=true/706a7ed9-bbac-4ade-89e1-a40694524396.jpeg"
+			"https://image-b2.civitai.com/file/civitai-media-cache/706a7ed9-bbac-4ade-89e1-a40694524396/450x%3Cauto%3E_so"
 		);
 		assert_eq!(post.width, 840);
 		assert_eq!(post.height, 1080);
@@ -437,5 +464,39 @@ mod tests {
 
 		assert_eq!(posts.len(), 1);
 		assert_eq!(posts[0].id, 10);
+	}
+
+	#[test]
+	fn rewrite_to_cached_thumbnail_handles_original_true_path() {
+		let original = "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/98782cee-b438-4f0f-916c-edb849960624/original=true/98782cee-b438-4f0f-916c-edb849960624.jpeg";
+		let rewritten = rewrite_to_cached_thumbnail_url(original);
+
+		assert_eq!(
+			rewritten.as_deref(),
+			Some(
+				"https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/450x%3Cauto%3E_so"
+			)
+		);
+	}
+
+	#[test]
+	fn rewrite_to_cached_thumbnail_handles_original_path() {
+		let original = "https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/original";
+		let rewritten = rewrite_to_cached_thumbnail_url(original);
+
+		assert_eq!(
+			rewritten.as_deref(),
+			Some(
+				"https://image-b2.civitai.com/file/civitai-media-cache/98782cee-b438-4f0f-916c-edb849960624/450x%3Cauto%3E_so"
+			)
+		);
+	}
+
+	#[test]
+	fn rewrite_to_cached_thumbnail_ignores_non_original_urls() {
+		let original = "https://image.civitai.com/example.png";
+		let rewritten = rewrite_to_cached_thumbnail_url(original);
+
+		assert!(rewritten.is_none());
 	}
 }
