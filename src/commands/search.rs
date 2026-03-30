@@ -138,7 +138,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 			})
 			.collect();
 
-		let id_width = rows.iter().map(|(id, _, _, _, _)| id.len()).max().unwrap_or(0);
+		let id_width = rows
+			.iter()
+			.map(|(id, _, _, _, _)| id.len())
+			.max()
+			.unwrap_or(0);
 		let percent_width = rows
 			.iter()
 			.map(|(_, percent, _, _, _)| percent.len())

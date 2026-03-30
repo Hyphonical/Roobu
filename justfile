@@ -12,12 +12,12 @@ default: dev
 fmt:
     cargo fmt --all --check
 
-# Development build with debug symbols and no optimizations
-dev: fmt
+# Development build with debug symbols and no optimizations, also run the linter
+dev: fmt lint
     cargo build
 
 # Release build with all optimizations
-release: fmt
+release: fmt lint
     cargo build --release --locked
 
 # Clean all build artifacts
@@ -25,15 +25,15 @@ clean:
     cargo clean
 
 # Run cargo check
-check: fmt
+check: fmt lint
     cargo check
 
 # Run clippy linter
 lint: fmt
-    cargo clippy --all-targets --all-features
+    cargo clippy --all-targets --all-features -- -D warnings
 
 # Run tests
-test: fmt
+test: fmt lint
     cargo test
 
 # Build the local Docker image
