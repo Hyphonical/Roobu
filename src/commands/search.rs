@@ -119,25 +119,50 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	if results.is_empty() {
 		ui_warn!("No results found");
 	} else {
-		for r in &results {
-			let percent = r.score * 100.0;
-			let dimensions = if r.width > 0 && r.height > 0 {
-				format!("{}x{}", r.width, r.height)
-			} else {
-				"unknown-size".to_string()
-			};
-			let ingestion = if r.ingestion_date > 0 {
-				format!("ingested={}", r.ingestion_date)
-			} else {
-				"ingested=unknown".to_string()
-			};
+		let rows: Vec<(String, String, String, String, String)> = results
+			.iter()
+			.map(|r| {
+				let id = format!("#{}", r.post_id);
+				let percent = format!("{:.2}%", r.score * 100.0);
+				let dimensions = if r.width > 0 && r.height > 0 {
+					format!("{}x{}", r.width, r.height)
+				} else {
+					"unknown-size".to_string()
+				};
+				let ingestion = if r.ingestion_date > 0 {
+					format!("ingested={}", r.ingestion_date)
+				} else {
+					"ingested=unknown".to_string()
+				};
+				(id, percent, dimensions, ingestion, r.post_url.clone())
+			})
+			.collect();
+
+		let id_width = rows.iter().map(|(id, _, _, _, _)| id.len()).max().unwrap_or(0);
+		let percent_width = rows
+			.iter()
+			.map(|(_, percent, _, _, _)| percent.len())
+			.max()
+			.unwrap_or(0);
+		let dimensions_width = rows
+			.iter()
+			.map(|(_, _, dimensions, _, _)| dimensions.len())
+			.max()
+			.unwrap_or(0);
+		let ingestion_width = rows
+			.iter()
+			.map(|(_, _, _, ingestion, _)| ingestion.len())
+			.max()
+			.unwrap_or(0);
+
+		for (id, percent, dimensions, ingestion, url) in rows {
 			println!(
-				"  {}    {}  {}  {}  {}",
-				format!("#{}", r.post_id).bright_white().bold(),
-				format!("{percent:.2}%").dimmed(),
-				dimensions.dimmed(),
-				ingestion.dimmed(),
-				r.post_url.cyan()
+				"  {}  {}  {}  {}  {}",
+				format!("{id:<id_width$}").bright_white().bold(),
+				format!("{percent:>percent_width$}").dimmed(),
+				format!("{dimensions:<dimensions_width$}").dimmed(),
+				format!("{ingestion:<ingestion_width$}").dimmed(),
+				url.cyan()
 			);
 		}
 		println!();
