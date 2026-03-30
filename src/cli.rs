@@ -153,7 +153,7 @@ pub enum Commands {
 		#[arg(long, default_value = config::DEFAULT_MODELS_DIR, help = "Directory containing ONNX model files")]
 		models_dir: PathBuf,
 
-		#[arg(long, default_value_t = config::DEFAULT_IMAGE_WEIGHT, help = "Image-vector weight in [0.0, 1.0]; tag weight is computed as 1.0 - weight")]
+		#[arg(long, default_value_t = config::DEFAULT_IMAGE_WEIGHT, help = "Image-query weight in [0.0, 1.0] for text+image hybrid queries; text-query weight is 1.0 - weight")]
 		weight: f32,
 
 		#[arg(

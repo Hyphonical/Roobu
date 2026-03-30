@@ -132,7 +132,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	ui_step!("{}", "Loading embedder…");
 	let embedder = Arc::new(embed::Embedder::new(
 		&args.models_dir,
-		embed::ModelLoad::TextAndVision,
+		embed::ModelLoad::VisionOnly,
 		args.onnx_optimization,
 	)?);
 	ui_success!("Embedder ready");

@@ -8,9 +8,7 @@ Core stages:
 
 1. Fetch recent posts from one or more site APIs.
 2. Download preview images and validate them.
-3. Generate two embeddings per post:
-   - image embedding from preview pixels
-   - tags embedding from normalized text tags
+3. Generate an image embedding per post from preview pixels.
 4. Upsert vectors and metadata into Qdrant.
 5. Query Qdrant using text, image, or hybrid search.
 6. Optionally run HDBSCAN over image vectors for cluster discovery.
@@ -39,7 +37,7 @@ Core stages:
 - src/embed.rs
   - Model loading, image preprocess, text tokenization, embedding, and blending.
 - src/store.rs
-  - Qdrant collection management, named vectors, weighted search merge, cluster vector fetch.
+  - Qdrant collection management, image-vector search, and cluster vector fetch.
 - src/sites
   - Site-specific HTTP/API adapters plus shared post model and validation logic.
 - src/checkpoint.rs
@@ -54,7 +52,7 @@ Each ingested post carries:
 - post id
 - site identifier and site namespace id
 - thumbnail URL (used for download)
-- tags string
+- tags string (stored as payload metadata)
 - rating
 - optional canonical post URL
 
@@ -62,8 +60,7 @@ At upsert time, each point stores:
 
 - point id: encoded from site namespace and post id
 - named vectors:
-  - image: 1024-d float vector
-  - tags: 1024-d float vector
+  - image: 1536-d float vector
 - payload:
   - post_id
   - site
@@ -90,7 +87,7 @@ This allows the same post id number to exist across multiple sites without colli
   - preflight filter (has thumbnail URL, aspect ratio gate)
   - download thumbnails with bounded concurrency
   - decode/size/aspect validation
-  - batch embed image and tags vectors
+  - batch embed image vectors
   - upsert to Qdrant
   - advance checkpoint to max post id observed
   - sleep poll interval
@@ -127,12 +124,11 @@ Two layers protect embedding quality and runtime:
    - text + image hybrid
 2. Load only required model components (text, vision, or both).
 3. Build query embedding:
-   - text only: text vector
-   - image only: image vector
-   - hybrid: normalized weighted blend of text and image vectors
-4. Query both named vectors in Qdrant (image and tags) when relevant.
-5. Merge scores per point id with weighted sum.
-6. Sort descending and return top results.
+  - text only: text vector
+  - image only: image vector
+  - hybrid: normalized weighted blend of text and image vectors
+4. Query the image vector in Qdrant.
+5. Sort descending and return top results.
 
 ## Cluster Flow
 
@@ -163,7 +159,6 @@ This balances memory footprint and retrieval quality for self-hosted setups.
 
 - Download concurrency is bounded by a semaphore.
 - Embedding is done in blocking worker threads to avoid stalling async IO.
-- Dual-vector search requests can execute concurrently when both vectors are used.
 
 ## Logging and Observability
 

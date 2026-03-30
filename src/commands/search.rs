@@ -56,7 +56,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	let store = store::Store::new(&args.qdrant_url).await?;
 
 	let image_weight = args.weight;
-	let tags_weight = 1.0 - args.weight;
 
 	let mode_label = match (has_text_query, has_image_query) {
 		(true, true) => "text+image",
@@ -75,11 +74,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	ui_step!(
 		"{}",
 		format!(
-			"{}  ·  mode={}  ·  index image={:.1} tags={:.1}",
+			"{}  ·  mode={}  ·  blend image={:.1} text={:.1}",
 			header_query.bright_white().bold(),
 			mode_label,
 			image_weight,
-			tags_weight
+			1.0 - image_weight
 		)
 		.as_str()
 	);
@@ -113,14 +112,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	.await??;
 
 	let results = store
-		.search(
-			Some(query_vec.to_vec()),
-			Some(query_vec.to_vec()),
-			image_weight,
-			tags_weight,
-			args.limit,
-			args.site.as_deref(),
-		)
+		.search(query_vec.to_vec(), args.limit, args.site.as_deref())
 		.await?;
 
 	println!();
@@ -129,10 +121,22 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	} else {
 		for r in &results {
 			let percent = r.score * 100.0;
+			let dimensions = if r.width > 0 && r.height > 0 {
+				format!("{}x{}", r.width, r.height)
+			} else {
+				"unknown-size".to_string()
+			};
+			let ingestion = if r.ingestion_date > 0 {
+				format!("ingested={}", r.ingestion_date)
+			} else {
+				"ingested=unknown".to_string()
+			};
 			println!(
-				"  {}    {}  {}",
+				"  {}    {}  {}  {}  {}",
 				format!("#{}", r.post_id).bright_white().bold(),
 				format!("{percent:.2}%").dimmed(),
+				dimensions.dimmed(),
+				ingestion.dimmed(),
 				r.post_url.cyan()
 			);
 		}

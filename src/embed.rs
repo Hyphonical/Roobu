@@ -17,7 +17,7 @@ use tokenizers::Tokenizer;
 use crate::config;
 use crate::error::RoobuError;
 
-pub const EMBED_DIM: usize = 1024;
+pub const EMBED_DIM: usize = 1536;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum OnnxOptimizationIntensity {

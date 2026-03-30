@@ -14,14 +14,14 @@ Roobu defaults are defined in src/config.rs.
 ### Ingest Defaults
 
 - Poll interval: 60 seconds
-- Batch size: 16
+- Batch size: 32
 - Download concurrency: 8
 - Per-site fetch timeout: 20 seconds
 
 ### Search Defaults
 
 - Result limit: 10
-- Image weight: 1.0
+- Hybrid image-query weight: 1.0
 - Fetch multiplier: 3 (internal oversampling before merge/truncate)
 
 ### Cluster Defaults
@@ -37,7 +37,7 @@ Roobu defaults are defined in src/config.rs.
 
 ### Embedding and Image Validation
 
-- Embedding dimension: 1024
+- Embedding dimension: 1536
 - Image input size: 256 x 256
 - Text sequence length: 64
 - Minimum downloaded bytes: 500
@@ -75,6 +75,9 @@ Roobu defaults are defined in src/config.rs.
 The models directory must include:
 
 - vision_model_q4f16.onnx
+
+Optional for text/hybrid search queries:
+
 - text_model_q4f16.onnx
 - tokenizer.json
 
@@ -120,8 +123,8 @@ If site endpoints are flaky:
 
 ### Search Relevance Tuning
 
-- Use --weight closer to 1.0 when visual similarity matters most.
-- Use --weight closer to 0.0 when tags/text intent should dominate.
+- Use --weight closer to 1.0 when image-query semantics should dominate hybrid queries.
+- Use --weight closer to 0.0 when text-query semantics should dominate hybrid queries.
 
 ### Cluster Quality Tuning
 

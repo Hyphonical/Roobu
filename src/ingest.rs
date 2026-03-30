@@ -172,18 +172,9 @@ async fn embed_downloaded_batch(
 			let preprocessed: Vec<DynamicImage> = images.iter().map(Embedder::preprocess).collect();
 
 			let image_vecs = embedder_clone.embed_images(&preprocessed)?;
-			let tag_texts: Vec<String> = posts_for_embed
-				.iter()
-				.map(|post| post.tags_normalized())
-				.collect();
-			let tags_vecs = embedder_clone.embed_texts(&tag_texts)?;
 
 			let mut results = Vec::with_capacity(posts_for_embed.len());
-			for ((post, image_vec), tags_vec) in posts_for_embed
-				.into_iter()
-				.zip(image_vecs.into_iter())
-				.zip(tags_vecs.into_iter())
-			{
+			for (post, image_vec) in posts_for_embed.into_iter().zip(image_vecs.into_iter()) {
 				results.push(PostEmbedding {
 					post_id: post.id,
 					site: post.site,
@@ -191,12 +182,12 @@ async fn embed_downloaded_batch(
 					post_url: post.post_url(),
 					thumbnail_url: post.thumbnail_url.clone(),
 					direct_image_url: post.preferred_image_url(),
+					tags: post.tags,
 					width: post.width,
 					height: post.height,
 					ingestion_date,
 					rating: post.rating.clone(),
 					image_vec,
-					tags_vec,
 				});
 			}
 			Ok(results)

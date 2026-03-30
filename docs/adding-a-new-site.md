@@ -129,7 +129,7 @@ When an API has multiple image URL candidates, implement explicit fallback order
 
 ### Keep Tags Useful
 
-If a site lacks classic booru tags, synthesize searchable text from available metadata fields.
+If a site lacks classic booru tags, synthesize metadata text from available fields so payload remains informative.
 
 ### Preserve Stability
 

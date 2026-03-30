@@ -32,12 +32,12 @@ pub struct PostEmbedding {
 	pub post_url: String,
 	pub thumbnail_url: String,
 	pub direct_image_url: String,
+	pub tags: String,
 	pub width: u32,
 	pub height: u32,
 	pub ingestion_date: i64,
 	pub rating: String,
 	pub image_vec: [f32; EMBED_DIM],
-	pub tags_vec: [f32; EMBED_DIM],
 }
 
 pub struct Store {
@@ -70,17 +70,6 @@ impl Store {
 		let mut vectors = VectorsConfigBuilder::default();
 		vectors.add_named_vector_params(
 			"image",
-			VectorParamsBuilder::new(EMBED_DIM as u64, Distance::Cosine)
-				.on_disk(true)
-				.quantization_config(
-					ScalarQuantizationBuilder::default()
-						.r#type(QuantizationType::Int8.into())
-						.quantile(0.99)
-						.always_ram(false),
-				),
-		);
-		vectors.add_named_vector_params(
-			"tags",
 			VectorParamsBuilder::new(EMBED_DIM as u64, Distance::Cosine)
 				.on_disk(true)
 				.quantization_config(
@@ -144,9 +133,7 @@ impl Store {
 			.map(|e| {
 				let point_id = encode_point_id(e.site_namespace, e.post_id);
 
-				let vectors = NamedVectors::default()
-					.add_vector("image", e.image_vec.to_vec())
-					.add_vector("tags", e.tags_vec.to_vec());
+				let vectors = NamedVectors::default().add_vector("image", e.image_vec.to_vec());
 
 				let payload: serde_json::Map<String, serde_json::Value> = [
 					("post_id".to_string(), serde_json::json!(e.post_id as i64)),
@@ -160,6 +147,7 @@ impl Store {
 						"direct_image_url".to_string(),
 						serde_json::json!(e.direct_image_url),
 					),
+					("tags".to_string(), serde_json::json!(e.tags)),
 					("width".to_string(), serde_json::json!(e.width as i64)),
 					("height".to_string(), serde_json::json!(e.height as i64)),
 					(
@@ -184,10 +172,7 @@ impl Store {
 
 	pub async fn search(
 		&self,
-		image_query_vec: Option<Vec<f32>>,
-		tags_query_vec: Option<Vec<f32>>,
-		image_weight: f32,
-		tags_weight: f32,
+		query_vec: Vec<f32>,
 		limit: u64,
 		site_filter: Option<&str>,
 	) -> Result<Vec<SearchResult>, RoobuError> {
@@ -196,133 +181,46 @@ impl Store {
 		let filter =
 			site_filter.map(|site| Filter::must([Condition::matches("site", site.to_string())]));
 
-		let mut image_search = image_query_vec.map(|query| {
-			SearchPointsBuilder::new(config::QDRANT_COLLECTION, query, fetch_limit)
+		let mut search =
+			SearchPointsBuilder::new(config::QDRANT_COLLECTION, query_vec, fetch_limit)
 				.vector_name("image")
-				.with_payload(true)
-		});
-
-		let mut tags_search = tags_query_vec.map(|query| {
-			SearchPointsBuilder::new(config::QDRANT_COLLECTION, query, fetch_limit)
-				.vector_name("tags")
-				.with_payload(true)
-		});
+				.with_payload(true);
 
 		if let Some(ref f) = filter {
-			if let Some(search) = image_search.take() {
-				image_search = Some(search.filter(f.clone()));
-			}
-			if let Some(search) = tags_search.take() {
-				tags_search = Some(search.filter(f.clone()));
-			}
+			search = search.filter(f.clone());
 		}
 
-		let run_image = image_weight > 0.0 && image_search.is_some();
-		let run_tags = tags_weight > 0.0 && tags_search.is_some();
+		let response: SearchResponse = self
+			.client
+			.search_points(search)
+			.await
+			.map_err(RoobuError::from)?;
 
-		let (image_points, tags_points) = match (run_image, run_tags) {
-			(true, true) => {
-				let image_builder = image_search.expect("checked above");
-				let tags_builder = tags_search.expect("checked above");
-				tokio::try_join!(
-					async {
-						let response: SearchResponse = self
-							.client
-							.search_points(image_builder)
-							.await
-							.map_err(RoobuError::from)?;
-						Ok::<_, RoobuError>(response.result)
-					},
-					async {
-						let response: SearchResponse = self
-							.client
-							.search_points(tags_builder)
-							.await
-							.map_err(RoobuError::from)?;
-						Ok::<_, RoobuError>(response.result)
-					},
-				)?
-			}
-			(true, false) => {
-				let response: SearchResponse = self
-					.client
-					.search_points(image_search.expect("checked above"))
-					.await
-					.map_err(RoobuError::from)?;
-				(response.result, Vec::new())
-			}
-			(false, true) => {
-				let response: SearchResponse = self
-					.client
-					.search_points(tags_search.expect("checked above"))
-					.await
-					.map_err(RoobuError::from)?;
-				(Vec::new(), response.result)
-			}
-			(false, false) => return Ok(Vec::new()),
-		};
-
-		let mut merged: std::collections::HashMap<u64, SearchResult> =
-			std::collections::HashMap::new();
-
-		let mut merge_points = |points: Vec<qdrant_client::qdrant::ScoredPoint>, weight: f32| {
-			for point in points {
-				let Some(id) = point
+		let mut results: Vec<SearchResult> = response
+			.result
+			.into_iter()
+			.filter_map(|point| {
+				let id = point
 					.id
 					.as_ref()
-					.and_then(|pid| pid.point_id_options.as_ref())
-				else {
-					continue;
-				};
+					.and_then(|pid| pid.point_id_options.as_ref())?;
 				let qdrant_client::qdrant::point_id::PointIdOptions::Num(point_id) = id else {
-					continue;
+					return None;
 				};
 
-				let post_url = payload_string(&point.payload, "post_url");
-				let thumbnail_url = payload_string(&point.payload, "thumbnail_url");
-				let direct_image_url = payload_string(&point.payload, "direct_image_url");
-				let width = payload_u32(&point.payload, "width");
-				let height = payload_u32(&point.payload, "height");
-				let ingestion_date = payload_i64(&point.payload, "ingestion_date");
 				let (_, raw_post_id) = decode_point_id(*point_id);
-
-				let entry = merged.entry(*point_id).or_insert_with(|| SearchResult {
+				Some(SearchResult {
 					post_id: raw_post_id,
-					post_url,
-					thumbnail_url,
-					direct_image_url,
-					width,
-					height,
-					ingestion_date,
-					score: 0.0,
-				});
-				if entry.post_url.is_empty() {
-					entry.post_url = payload_string(&point.payload, "post_url");
-				}
-				if entry.thumbnail_url.is_empty() {
-					entry.thumbnail_url = payload_string(&point.payload, "thumbnail_url");
-				}
-				if entry.direct_image_url.is_empty() {
-					entry.direct_image_url = payload_string(&point.payload, "direct_image_url");
-				}
-				if entry.width == 0 {
-					entry.width = payload_u32(&point.payload, "width");
-				}
-				if entry.height == 0 {
-					entry.height = payload_u32(&point.payload, "height");
-				}
-				if entry.ingestion_date == 0 {
-					entry.ingestion_date = payload_i64(&point.payload, "ingestion_date");
-				}
-
-				entry.score += weight * point.score;
-			}
-		};
-
-		merge_points(image_points, image_weight);
-		merge_points(tags_points, tags_weight);
-
-		let mut results: Vec<SearchResult> = merged.into_values().collect();
+					post_url: payload_string(&point.payload, "post_url"),
+					thumbnail_url: payload_string(&point.payload, "thumbnail_url"),
+					direct_image_url: payload_string(&point.payload, "direct_image_url"),
+					width: payload_u32(&point.payload, "width"),
+					height: payload_u32(&point.payload, "height"),
+					ingestion_date: payload_i64(&point.payload, "ingestion_date"),
+					score: point.score,
+				})
+			})
+			.collect();
 		for result in &mut results {
 			if result.direct_image_url.is_empty() {
 				result.direct_image_url = result.thumbnail_url.clone();

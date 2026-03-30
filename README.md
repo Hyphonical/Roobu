@@ -27,7 +27,7 @@ No SaaS. No API gateway maze. No mystery black box in someone else's cloud.
 
 Roobu is a self-hosted semantic image search tool for booru-style sites.
 
-It continuously ingests new posts, embeds both thumbnails and tags into a shared vector space, then searches by cosine similarity.
+It continuously ingests new posts, embeds thumbnails into a shared vector space, then searches by cosine similarity.
 
 That means queries like:
 
@@ -54,10 +54,9 @@ It is built for "I want this running on my VPS tonight" energy.
 
 - Natural-language search over booru content
 - Query by text, image, or text+image hybrid
-- Hybrid scoring with two vectors per post:
+- Image-only indexing with one vector per post:
   - `image` vector from thumbnail
-  - `tags` vector from normalized tags text
-- Query-time weighting (`--weight`) between image and tag relevance
+- Query-time weighting (`--weight`) for text+image query blending
 - HDBSCAN clustering over stored image vectors with paged Qdrant retrieval
 - Configurable ONNX graph optimization intensity (`--onnx-optimization`)
 - Continuous ingestion loop with checkpoint resume support
@@ -91,9 +90,9 @@ cargo build --release
 
 Place model files in `models/`:
 
-- `vision_model_q4f16.onnx`
-- `text_model_q4f16.onnx`
-- `tokenizer.json`
+- `vision_model_q4f16.onnx` (required for ingest and image search)
+- `text_model_q4f16.onnx` (optional, required for text/hybrid search)
+- `tokenizer.json` (optional, required for text/hybrid search)
 
 If your ONNX export includes a `.onnx_data` shard, keep it beside the matching `.onnx` file.
 
@@ -162,7 +161,7 @@ Options:
   --poll-interval <SECONDS>     Poll interval [default: 60]
   --site-fetch-timeout-secs <SECONDS>
                                  Per-site fetch timeout before skipping [default: 20]
-  --batch-size <N>              Batch size [default: 16]
+  --batch-size <N>              Batch size [default: 32]
   --download-concurrency <N>    Concurrent downloads [default: 8]
   --onnx-optimization <LEVEL>   ONNX optimization: safe|balanced|aggressive [default: safe]
   --rule34-api-key <KEY>        Rule34 API key (or RULE34_API_KEY), required for --site rule34
@@ -247,23 +246,22 @@ Options:
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --models-dir <PATH>           Model directory [default: models]
   -i, --image <PATH>            Optional image query path
-  --weight <0.0-1.0>            Image weight (query blend + index weighting) [default: 1.0]
+  --weight <0.0-1.0>            Image-query weight for text+image hybrid queries [default: 1.0]
   --onnx-optimization <LEVEL>   ONNX optimization: safe|balanced|aggressive [default: safe]
   --site <NAME>                 Payload site filter (e.g. rule34)
 ```
 
 Notes:
 
-- `--weight` controls image influence in two places.
-- Tag-vector weight is computed as `1.0 - weight`.
-- If both `QUERY` and `--image` are set, the query embedding blend also uses `--weight`.
+- `--weight` applies only when both `QUERY` and `--image` are provided.
+- For hybrid queries, text weight is computed as `1.0 - weight`.
 - `safe` optimization is the default and is the most reliable profile for constrained VPS deployments.
 - If `--site` is omitted, search runs across all indexed sites.
 
 Examples:
 ```bash
-# Fully visual
-roobu search --qdrant-url http://localhost:6334 --weight 1.0 "woman on beach"
+# Text-only query (requires text model + tokenizer)
+roobu search --qdrant-url http://localhost:6334 "woman on beach"
 
 # Image-only query
 roobu search --qdrant-url http://localhost:6334 --image ./query.png
@@ -271,8 +269,8 @@ roobu search --qdrant-url http://localhost:6334 --image ./query.png
 # Text + image hybrid query
 roobu search --qdrant-url http://localhost:6334 --image ./query.png --weight 0.6 "pink hair shocked blue eyes"
 
-# Hybrid scoring (70% image, 30% tags)
-roobu search --qdrant-url http://localhost:6334 --weight 0.7 "pink bedroom"
+# Hybrid query blend (70% image, 30% text)
+roobu search --qdrant-url http://localhost:6334 --weight 0.7 --image ./query.png "pink bedroom"
 
 # Restrict to one site
 roobu search --qdrant-url http://localhost:6334 --site rule34 "elf warrior"
@@ -303,7 +301,7 @@ Notes:
 
 - Retrieval is paged (`--page-size`) to avoid large one-shot Qdrant requests.
 - `--max-points` bounds total load and runtime on smaller VPS/database setups.
-- `--projection-dims` can reduce clustering time significantly (for example: 1024 → 256 or 128) while preserving rough neighborhood structure.
+- `--projection-dims` can reduce clustering time significantly (for example: 1536 -> 256 or 128) while preserving rough neighborhood structure.
 - `--projection-nnz` tunes projection quality/speed: lower is faster, higher preserves more detail.
 - Output includes per-cluster cohesion, a representative URL, and up to `--limit` sample URLs.
 - If clusters are too broad, try higher `--min-samples`, non-zero `--epsilon`, or `--max-cluster-size`.
@@ -326,7 +324,7 @@ roobu cluster \
 
 ## Qdrant Quantization
 
-Roobu configures scalar quantization for both vectors when the collection is first created:
+Roobu configures scalar quantization for the image vector when the collection is first created:
 
 - Type: `Int8`
 - Quantile: `0.99`

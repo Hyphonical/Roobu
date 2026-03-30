@@ -152,16 +152,6 @@ impl Post {
 		}
 	}
 
-	pub fn tags_normalized(&self) -> String {
-		let cleaned = self.tags.replace('_', " ");
-		let trimmed = cleaned.trim();
-		if trimmed.is_empty() {
-			"unknown".to_string()
-		} else {
-			trimmed.to_string()
-		}
-	}
-
 	pub fn has_thumbnail(&self) -> bool {
 		!self.thumbnail_url.is_empty()
 	}
@@ -358,15 +348,5 @@ mod tests {
 		);
 		assert_eq!(konachan.post_url(), "https://konachan.com/post/show/111");
 		assert_eq!(yandere.post_url(), "https://yande.re/post/show/222");
-	}
-
-	#[test]
-	fn tags_normalized_uses_unknown_for_empty_input() {
-		let post = Post {
-			tags: "   ".to_string(),
-			..make_post(1, "rule34", 1)
-		};
-
-		assert_eq!(post.tags_normalized(), "unknown");
 	}
 }

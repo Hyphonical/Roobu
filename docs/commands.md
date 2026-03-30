@@ -28,7 +28,8 @@ Continuous indexing loop that fetches posts, embeds them, and upserts vectors.
 - --qdrant-url
   - Qdrant gRPC endpoint.
 - --models-dir
-  - Folder containing vision_model_q4f16.onnx, text_model_q4f16.onnx, tokenizer.json.
+  - Folder containing vision_model_q4f16.onnx (required).
+  - text_model_q4f16.onnx and tokenizer.json are optional unless you use text or hybrid search queries.
 - --checkpoint
   - JSON file storing per-site last processed post id.
 - --poll-interval
@@ -62,7 +63,7 @@ Continuous indexing loop that fetches posts, embeds them, and upserts vectors.
 
 ### What ingest Persists
 
-- Qdrant points with image + tags vectors and payload metadata.
+- Qdrant points with image vectors and payload metadata.
 - Checkpoint file updates after successful upserts.
 
 ### Example
@@ -92,7 +93,8 @@ Semantic retrieval from Qdrant using text, image, or hybrid query vectors.
 - --image
   - Path to image for visual query.
 - --weight
-  - Image weight in [0.0, 1.0]. Tags weight is computed as 1.0 - weight.
+  - Image-query weight in [0.0, 1.0] for text+image hybrid query embedding.
+  - Text-query weight is computed as 1.0 - weight.
 - --limit
   - Number of results to return.
 - --site
@@ -100,11 +102,9 @@ Semantic retrieval from Qdrant using text, image, or hybrid query vectors.
 
 ### Scoring Behavior
 
-Roobu can query both named vectors and merge scores.
+Roobu queries the image named vector.
 
-- image contribution = image_weight * image_similarity
-- tags contribution = tags_weight * tags_similarity
-- final score = sum of active contributions
+- final score = image_similarity(query_embedding, indexed_image_embedding)
 
 ### Output
 

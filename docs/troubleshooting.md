@@ -12,8 +12,9 @@ Symptoms:
 Checks:
 
 - models directory exists
-- required files are present:
+- required file is present:
   - vision_model_q4f16.onnx
+- optional files for text/hybrid search are present when needed:
   - text_model_q4f16.onnx
   - tokenizer.json
 - models-dir flag points to the correct path
@@ -38,7 +39,7 @@ Checks:
 - checkpoint file is not stuck at very low values due to repeated cycle failures
 - query mode is valid and not empty
 - --site filter matches payload values exactly
-- try lower image weight for text-heavy queries
+- when using text+image hybrid queries, try lower image weight for text-heavy intent
 
 ### Ingest loops but indexes little data
 

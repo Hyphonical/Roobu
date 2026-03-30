@@ -62,7 +62,7 @@ Site adapters should provide enough metadata for preflight filtering to work wel
 - thumbnail_url should be non-empty for downloadable content
 - width and height should be provided when available
 - rating should be mapped to a stable representation when possible
-- tags should include meaningful searchable text
+- tags should include meaningful metadata text (stored in payload)
 
 ## Site Adapter Contract
 
