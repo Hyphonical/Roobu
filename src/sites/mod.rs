@@ -272,18 +272,35 @@ fn is_valid_image_format(bytes: &[u8]) -> bool {
 	}
 
 	// PNG: 89 50 4E 47
-	if bytes.len() >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 {
+	if bytes.len() >= 4
+		&& bytes[0] == 0x89
+		&& bytes[1] == 0x50
+		&& bytes[2] == 0x4E
+		&& bytes[3] == 0x47
+	{
 		return true;
 	}
 
 	// GIF: 47 49 46 38
-	if bytes.len() >= 4 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38 {
+	if bytes.len() >= 4
+		&& bytes[0] == 0x47
+		&& bytes[1] == 0x49
+		&& bytes[2] == 0x46
+		&& bytes[3] == 0x38
+	{
 		return true;
 	}
 
 	// WebP: 52 49 46 46 (RIFF) followed by 57 45 42 50 (WEBP)
-	if bytes.len() >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46
-		&& bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50
+	if bytes.len() >= 12
+		&& bytes[0] == 0x52
+		&& bytes[1] == 0x49
+		&& bytes[2] == 0x46
+		&& bytes[3] == 0x46
+		&& bytes[8] == 0x57
+		&& bytes[9] == 0x45
+		&& bytes[10] == 0x42
+		&& bytes[11] == 0x50
 	{
 		return true;
 	}
@@ -339,7 +356,7 @@ pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::Dy
 
 #[cfg(test)]
 mod tests {
-	use super::{is_valid_image_format, Post};
+	use super::{Post, is_valid_image_format};
 
 	fn make_post(id: u64, site: &'static str, site_namespace: u64) -> Post {
 		Post {
