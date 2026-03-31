@@ -260,9 +260,56 @@ impl BooruClient for SiteClient {
 
 use std::future::Future;
 
+/// Check if bytes represent a valid image format by examining magic bytes
+fn is_valid_image_format(bytes: &[u8]) -> bool {
+	if bytes.len() < 4 {
+		return false;
+	}
+
+	// JPEG: FF D8 FF
+	if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+		return true;
+	}
+
+	// PNG: 89 50 4E 47
+	if bytes.len() >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 {
+		return true;
+	}
+
+	// GIF: 47 49 46 38
+	if bytes.len() >= 4 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38 {
+		return true;
+	}
+
+	// WebP: 52 49 46 46 (RIFF) followed by 57 45 42 50 (WEBP)
+	if bytes.len() >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46
+		&& bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50
+	{
+		return true;
+	}
+
+	// BMP: 42 4D
+	if bytes.len() >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D {
+		return true;
+	}
+
+	false
+}
+
 pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::DynamicImage> {
 	if bytes.len() < config::MIN_DOWNLOADED_IMAGE_BYTES {
 		tracing::warn!(post_id, len = bytes.len(), "skipped: tiny image");
+		return None;
+	}
+
+	// Check magic bytes before attempting to decode
+	if !is_valid_image_format(bytes) {
+		tracing::warn!(
+			post_id,
+			len = bytes.len(),
+			first_bytes = format!("{:02X?}", &bytes[..bytes.len().min(8)]),
+			"skipped: invalid image format (bad magic bytes)"
+		);
 		return None;
 	}
 
@@ -292,7 +339,7 @@ pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::Dy
 
 #[cfg(test)]
 mod tests {
-	use super::Post;
+	use super::{is_valid_image_format, Post};
 
 	fn make_post(id: u64, site: &'static str, site_namespace: u64) -> Post {
 		Post {
@@ -348,5 +395,63 @@ mod tests {
 		);
 		assert_eq!(konachan.post_url(), "https://konachan.com/post/show/111");
 		assert_eq!(yandere.post_url(), "https://yande.re/post/show/222");
+	}
+
+	#[test]
+	fn test_is_valid_image_format_jpeg() {
+		// JPEG magic bytes: FF D8 FF
+		let jpeg_bytes = [0xFF, 0xD8, 0xFF, 0xE0];
+		assert!(is_valid_image_format(&jpeg_bytes));
+	}
+
+	#[test]
+	fn test_is_valid_image_format_png() {
+		// PNG magic bytes: 89 50 4E 47
+		let png_bytes = [0x89, 0x50, 0x4E, 0x47];
+		assert!(is_valid_image_format(&png_bytes));
+	}
+
+	#[test]
+	fn test_is_valid_image_format_gif() {
+		// GIF magic bytes: 47 49 46 38
+		let gif_bytes = [0x47, 0x49, 0x46, 0x38];
+		assert!(is_valid_image_format(&gif_bytes));
+	}
+
+	#[test]
+	fn test_is_valid_image_format_webp() {
+		// WebP magic bytes: RIFF (52 49 46 46) followed by WEBP (57 45 42 50)
+		let webp_bytes = [
+			0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+		];
+		assert!(is_valid_image_format(&webp_bytes));
+	}
+
+	#[test]
+	fn test_is_valid_image_format_bmp() {
+		// BMP magic bytes: 42 4D
+		let bmp_bytes = [0x42, 0x4D, 0x00, 0x00];
+		assert!(is_valid_image_format(&bmp_bytes));
+	}
+
+	#[test]
+	fn test_is_valid_image_format_invalid() {
+		// Invalid bytes that don't match any known image format
+		let invalid_bytes = [0x00, 0x01, 0x02, 0x03];
+		assert!(!is_valid_image_format(&invalid_bytes));
+	}
+
+	#[test]
+	fn test_is_valid_image_format_too_short() {
+		// Too short to be a valid image
+		let short_bytes = [0xFF];
+		assert!(!is_valid_image_format(&short_bytes));
+	}
+
+	#[test]
+	fn test_is_valid_image_format_empty() {
+		// Empty bytes
+		let empty_bytes: [u8; 0] = [];
+		assert!(!is_valid_image_format(&empty_bytes));
 	}
 }
