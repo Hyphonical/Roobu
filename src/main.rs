@@ -13,7 +13,17 @@ mod ui;
 use clap::Parser;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
+	if let Err(error) = run().await {
+		eprintln!("Error: {error}");
+		for cause in error.chain().skip(1) {
+			eprintln!("  caused by: {cause}");
+		}
+		std::process::exit(1);
+	}
+}
+
+async fn run() -> anyhow::Result<()> {
 	tracing_subscriber::fmt()
 		.with_env_filter(
 			tracing_subscriber::EnvFilter::try_from_default_env()

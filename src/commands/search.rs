@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, ensure};
-use image::ImageReader;
+use anyhow::{Context, bail, ensure};
+use image::DynamicImage;
 use owo_colors::OwoColorize;
 
 use crate::embed::{self, OnnxOptimizationIntensity};
@@ -18,6 +18,43 @@ pub struct Args {
 	pub weight: f32,
 	pub onnx_optimization: OnnxOptimizationIntensity,
 	pub site: Option<String>,
+}
+
+fn effective_image_weight(
+	has_text_query: bool,
+	has_image_query: bool,
+	requested_weight: f32,
+) -> f32 {
+	match (has_text_query, has_image_query) {
+		(true, true) => requested_weight,
+		(true, false) => 0.0,
+		(false, true) => 1.0,
+		(false, false) => requested_weight,
+	}
+}
+
+fn blend_label(image_weight: f32) -> Option<String> {
+	if image_weight > 0.0 && image_weight < 1.0 {
+		Some(format!(
+			"  ·  blend image={:.1} text={:.1}",
+			image_weight,
+			1.0 - image_weight
+		))
+	} else {
+		None
+	}
+}
+
+fn load_query_image(path: &std::path::Path) -> anyhow::Result<DynamicImage> {
+	let bytes = std::fs::read(path)
+		.with_context(|| format!("Failed to read image file {}", path.display()))?;
+
+	image::load_from_memory(&bytes).with_context(|| {
+		format!(
+			"Failed to decode image {} from file content",
+			path.display()
+		)
+	})
 }
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
@@ -55,7 +92,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	)?);
 	let store = store::Store::new(&args.qdrant_url).await?;
 
-	let image_weight = args.weight;
+	let query_image_weight = effective_image_weight(has_text_query, has_image_query, args.weight);
 
 	let mode_label = match (has_text_query, has_image_query) {
 		(true, true) => "text+image",
@@ -74,11 +111,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	ui_step!(
 		"{}",
 		format!(
-			"{}  ·  mode={}  ·  blend image={:.1} text={:.1}",
+			"{}  ·  mode={}{}",
 			header_query.bright_white().bold(),
 			mode_label,
-			image_weight,
-			1.0 - image_weight
+			blend_label(query_image_weight).unwrap_or_default()
 		)
 		.as_str()
 	);
@@ -87,12 +123,12 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		let embedder = Arc::clone(&embedder);
 		let text_query = text_query.clone();
 		let image = args.image.clone();
-		let image_weight = args.weight;
+		let image_weight = query_image_weight;
 
 		move || -> anyhow::Result<[f32; embed::EMBED_DIM]> {
 			match (text_query, image) {
 				(Some(text), Some(image_path)) => {
-					let image = ImageReader::open(&image_path)?.decode()?;
+					let image = load_query_image(&image_path)?;
 					let preprocessed = embed::Embedder::preprocess(&image);
 					let image_vec = embedder.embed_image(&preprocessed)?;
 					let text_vec = embedder.embed_text(&text)?;
@@ -101,7 +137,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 				}
 				(Some(text), None) => Ok(embedder.embed_text(&text)?),
 				(None, Some(image_path)) => {
-					let image = ImageReader::open(&image_path)?.decode()?;
+					let image = load_query_image(&image_path)?;
 					let preprocessed = embed::Embedder::preprocess(&image);
 					Ok(embedder.embed_image(&preprocessed)?)
 				}
@@ -111,6 +147,16 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	})
 	.await??;
 
+	ensure!(
+		query_vec.iter().all(|value| value.is_finite()),
+		"generated query embedding contains non-finite values; verify text_model_q4f16.onnx and tokenizer.json match the indexed model set"
+	);
+	let query_norm_sq: f32 = query_vec.iter().map(|value| value * value).sum();
+	ensure!(
+		query_norm_sq > 1e-6,
+		"generated query embedding is near zero; verify text_model_q4f16.onnx and tokenizer.json are valid and aligned with ingest"
+	);
+
 	let results = store
 		.search(query_vec.to_vec(), args.limit, args.site.as_deref())
 		.await?;
@@ -118,6 +164,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	println!();
 	if results.is_empty() {
 		ui_warn!("No results found");
+		if has_text_query {
+			ui_warn!(
+				"Text query returned no matches. Ensure text_model_q4f16.onnx and tokenizer.json match the model export used during ingest."
+			);
+		}
 	} else {
 		let rows: Vec<(String, String, String, String, String)> = results
 			.iter()
@@ -177,4 +228,38 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{blend_label, effective_image_weight};
+
+	#[test]
+	fn effective_image_weight_is_text_only_for_text_mode() {
+		assert_eq!(effective_image_weight(true, false, 1.0), 0.0);
+	}
+
+	#[test]
+	fn effective_image_weight_is_image_only_for_image_mode() {
+		assert_eq!(effective_image_weight(false, true, 0.2), 1.0);
+	}
+
+	#[test]
+	fn effective_image_weight_uses_requested_value_for_hybrid_mode() {
+		assert_eq!(effective_image_weight(true, true, 0.6), 0.6);
+	}
+
+	#[test]
+	fn blend_label_is_hidden_for_pure_text_or_image_weights() {
+		assert!(blend_label(0.0).is_none());
+		assert!(blend_label(1.0).is_none());
+	}
+
+	#[test]
+	fn blend_label_is_shown_for_mixed_weights() {
+		assert_eq!(
+			blend_label(0.4).as_deref(),
+			Some("  ·  blend image=0.4 text=0.6")
+		);
+	}
 }

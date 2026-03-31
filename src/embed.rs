@@ -63,7 +63,7 @@ impl Embedder {
 		let graph_level = onnx_optimization.graph_level();
 
 		let vision = if matches!(model_load, ModelLoad::VisionOnly | ModelLoad::TextAndVision) {
-			let session = create_session(&vision_path, graph_level)?;
+			let session = create_session(&vision_path, graph_level, true)?;
 			log_session_io("vision", &session);
 			Some(Mutex::new(session))
 		} else {
@@ -71,7 +71,7 @@ impl Embedder {
 		};
 
 		let text = if matches!(model_load, ModelLoad::TextOnly | ModelLoad::TextAndVision) {
-			let session = create_session(&text_path, graph_level)?;
+			let session = create_text_session_with_fallback(&text_path, onnx_optimization)?;
 			log_session_io("text", &session);
 			Some(Mutex::new(session))
 		} else {
@@ -237,7 +237,7 @@ fn log_session_io(model_name: &str, session: &Session) {
 		session
 			.inputs()
 			.iter()
-			.map(|i| i.name())
+			.map(|i| format!("{}: {}", i.name(), i.dtype()))
 			.collect::<Vec<_>>()
 	);
 	tracing::debug!(
@@ -245,22 +245,75 @@ fn log_session_io(model_name: &str, session: &Session) {
 		session
 			.outputs()
 			.iter()
-			.map(|o| o.name())
+			.map(|o| format!("{}: {}", o.name(), o.dtype()))
 			.collect::<Vec<_>>()
 	);
 }
 
-fn create_session(model_path: &Path, level: GraphOptimizationLevel) -> Result<Session, RoobuError> {
-	let mut builder = Session::builder()
-		.map_err(RoobuError::Onnx)?
-		.with_auto_device(AutoDevicePolicy::MaxPerformance)
-		.map_err(|e| RoobuError::Onnx(e.into()))?
+fn create_session(
+	model_path: &Path,
+	level: GraphOptimizationLevel,
+	use_auto_device: bool,
+) -> Result<Session, RoobuError> {
+	let mut builder = Session::builder().map_err(RoobuError::Onnx)?;
+
+	if use_auto_device {
+		builder = builder
+			.with_auto_device(AutoDevicePolicy::MaxPerformance)
+			.map_err(|e| RoobuError::Onnx(e.into()))?;
+	}
+
+	builder = builder
 		.with_optimization_level(level)
 		.map_err(|e| RoobuError::Onnx(e.into()))?;
 
 	builder
 		.commit_from_file(model_path)
 		.map_err(RoobuError::Onnx)
+}
+
+fn text_fallback_levels(intensity: OnnxOptimizationIntensity) -> &'static [GraphOptimizationLevel] {
+	match intensity {
+		OnnxOptimizationIntensity::Aggressive => &[
+			GraphOptimizationLevel::All,
+			GraphOptimizationLevel::Level2,
+			GraphOptimizationLevel::Level1,
+		],
+		OnnxOptimizationIntensity::Balanced => &[
+			GraphOptimizationLevel::Level2,
+			GraphOptimizationLevel::Level1,
+		],
+		OnnxOptimizationIntensity::Safe => &[GraphOptimizationLevel::Level1],
+	}
+}
+
+fn create_text_session_with_fallback(
+	model_path: &Path,
+	intensity: OnnxOptimizationIntensity,
+) -> Result<Session, RoobuError> {
+	let levels = text_fallback_levels(intensity);
+	let mut last_error: Option<RoobuError> = None;
+
+	for (idx, level) in levels.iter().copied().enumerate() {
+		match create_session(model_path, level, false) {
+			Ok(session) => {
+				if idx > 0 {
+					tracing::warn!(
+						requested = ?intensity,
+						applied = ?level,
+						"text model required lower ONNX optimization level"
+					);
+				}
+				return Ok(session);
+			}
+			Err(error) => {
+				tracing::warn!(attempt = ?level, error = %error, "text model session initialization failed");
+				last_error = Some(error);
+			}
+		}
+	}
+
+	Err(last_error.unwrap_or(RoobuError::ModelNotLoaded("text model")))
 }
 
 fn expect_shape(shape: &[i64], rows: usize, cols: usize) -> Result<(), RoobuError> {
