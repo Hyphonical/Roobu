@@ -1,4 +1,5 @@
 mod cluster;
+mod graph_hdbscan;
 mod ingest;
 mod search;
 mod stats;
@@ -72,32 +73,18 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 		cli::Commands::Cluster {
 			qdrant_url,
 			site,
-			page_size,
 			max_points,
 			min_cluster_size,
-			min_samples,
-			limit,
-			max_cluster_size,
-			epsilon,
-			allow_single_cluster,
 			projection_dims,
-			projection_nnz,
-			projection_seed,
+			top_clusters,
 		} => {
 			cluster::run(cluster::Args {
 				qdrant_url,
 				site,
-				page_size,
 				max_points,
 				min_cluster_size,
-				min_samples,
-				limit,
-				max_cluster_size,
-				epsilon,
-				allow_single_cluster,
 				projection_dims,
-				projection_nnz,
-				projection_seed,
+				top_clusters,
 			})
 			.await
 		}

@@ -17,7 +17,7 @@ No SaaS. No API gateway maze. No mystery black box in someone else's cloud.
 - [Usage](#usage)
   - [`ingest` - Pull + index new posts](#ingest---pull--index-new-posts)
   - [`search` - Find matching posts](#search---find-matching-posts)
-  - [`cluster` - Run HDBSCAN over stored vectors](#cluster---run-hdbscan-over-stored-vectors)
+  - [`cluster` - Run GraphHDBSCAN over stored vectors](#cluster---run-graphhdbscan-over-stored-vectors)
 - [Qdrant Quantization](#qdrant-quantization)
 - [Resetting the Database](#resetting-the-database)
 - [Contributing](#contributing)
@@ -57,7 +57,7 @@ It is built for "I want this running on my VPS tonight" energy.
 - Image-only indexing with one vector per post:
   - `image` vector from thumbnail
 - Query-time weighting (`--weight`) for text+image query blending
-- HDBSCAN clustering over stored image vectors with paged Qdrant retrieval
+- GraphHDBSCAN clustering over stored image vectors with paged Qdrant retrieval
 - Configurable ONNX graph optimization intensity (`--onnx-optimization`)
 - Continuous ingestion loop with checkpoint resume support
 - Pre-flight and post-download image validation filters
@@ -276,7 +276,7 @@ roobu search --qdrant-url http://localhost:6334 --weight 0.7 --image ./query.png
 roobu search --qdrant-url http://localhost:6334 --site rule34 "elf warrior"
 ```
 
-### `cluster` - Run HDBSCAN over stored vectors
+### `cluster` - Run GraphHDBSCAN over stored vectors
 
 ```bash
 roobu cluster [OPTIONS]
@@ -284,29 +284,21 @@ roobu cluster [OPTIONS]
 Options:
   --qdrant-url <URL>            Qdrant gRPC endpoint [default: http://localhost:6334]
   --site <NAME>                 Optional site payload filter (e.g. rule34)
-  --page-size <N>               Scroll page size per Qdrant request [default: 256]
   --max-points <N>              Maximum vectors to fetch before clustering [default: 50000]
   --min-cluster-size <N>        Minimum samples required for a cluster [default: 10]
-  --min-samples <N>             Optional core-distance neighborhood override
-  -l, --limit <N>               Sample URLs to print per cluster [default: 10]
-  --max-cluster-size <N>        Optional cap for very large clusters
-  --epsilon <F64>               Strictness threshold for cluster selection [default: 0.05]
-  --allow-single-cluster        Allow a single dominant cluster
-  --projection-dims <N>         Optional sparse-random-projection target dimension
-  --projection-nnz <N>          Projection density per source dimension [default: 2]
-  --projection-seed <N>         Projection seed for reproducible runs [default: 1215765097]
+  --projection-dims <N>         Sparse-random-projection target dimension [default: 256]
+  --top-clusters <N>            Maximum number of most cohesive clusters to display [default: 10]
 ```
 
 Notes:
 
-- Retrieval is paged (`--page-size`) to avoid large one-shot Qdrant requests.
+- Retrieval is paged internally to avoid large one-shot Qdrant requests.
 - `--max-points` bounds total load and runtime on smaller VPS/database setups.
-- `--projection-dims` can reduce clustering time significantly (for example: 1536 -> 256 or 128) while preserving rough neighborhood structure.
-- `--projection-nnz` tunes projection quality/speed: lower is faster, higher preserves more detail.
-- Output includes per-cluster cohesion, a representative URL, and up to `--limit` sample URLs.
-- If clusters are too broad, try higher `--min-samples`, non-zero `--epsilon`, or `--max-cluster-size`.
-- Noise points are labeled `-1` by HDBSCAN.
-- `--epsilon 0.05` is a conservative default for normalized embedding spaces; raise gradually if you want fewer micro-clusters.
+- `--projection-dims` can reduce clustering time significantly (for example: 1536 -> 256) while preserving rough neighborhood structure.
+- GraphHDBSCAN runs with speed-focused defaults tuned for large corpora while preserving noise separation.
+- Output ranks clusters by cohesion and shows only the top `--top-clusters` groups.
+- Each shown cluster prints one representative URL plus up to five nearby preview URLs.
+- Noise points are labeled `-1` by GraphHDBSCAN.
 
 Example:
 
@@ -314,12 +306,10 @@ Example:
 roobu cluster \
   --qdrant-url http://localhost:6334 \
   --site rule34 \
-  --page-size 256 \
-  --max-points 1500 \
+  --max-points 50000 \
   --min-cluster-size 12 \
-  --min-samples 8 \
-  --epsilon 0.05 \
-  --limit 10
+  --projection-dims 256 \
+  --top-clusters 10
 ```
 
 ## Qdrant Quantization

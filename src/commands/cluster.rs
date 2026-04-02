@@ -2,9 +2,9 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use anyhow::ensure;
-use hdbscan::{Hdbscan, HdbscanHyperParams};
 use owo_colors::OwoColorize;
 
+use super::graph_hdbscan::{self, GraphHdbscanParams};
 use crate::config;
 use crate::embed;
 use crate::store;
@@ -13,55 +13,33 @@ use crate::ui::{header, ui_step, ui_success, ui_warn};
 pub struct Args {
 	pub qdrant_url: String,
 	pub site: Option<String>,
-	pub page_size: u32,
 	pub max_points: usize,
 	pub min_cluster_size: usize,
-	pub min_samples: Option<usize>,
-	pub limit: usize,
-	pub max_cluster_size: Option<usize>,
-	pub epsilon: f64,
-	pub allow_single_cluster: bool,
-	pub projection_dims: Option<usize>,
-	pub projection_nnz: usize,
-	pub projection_seed: u64,
+	pub projection_dims: usize,
+	pub top_clusters: usize,
 }
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
 	header("roobu · cluster");
 
-	ensure!(args.page_size > 0, "--page-size must be greater than 0");
 	ensure!(args.max_points > 0, "--max-points must be greater than 0");
-	ensure!(args.limit > 0, "--limit must be greater than 0");
+	ensure!(
+		args.top_clusters > 0,
+		"--top-clusters must be greater than 0"
+	);
 	ensure!(
 		args.min_cluster_size >= 2,
 		"--min-cluster-size must be at least 2"
 	);
-	if let Some(ms) = args.min_samples {
-		ensure!(ms >= 1, "--min-samples must be at least 1");
-	}
-	if let Some(max_size) = args.max_cluster_size {
-		ensure!(max_size >= 2, "--max-cluster-size must be at least 2");
-		ensure!(
-			max_size >= args.min_cluster_size,
-			"--max-cluster-size must be greater than or equal to --min-cluster-size"
-		);
-	}
 	ensure!(
-		args.epsilon >= 0.0,
-		"--epsilon must be greater than or equal to 0.0"
+		args.projection_dims >= 2,
+		"--projection-dims must be at least 2"
 	);
 	ensure!(
-		args.projection_nnz > 0,
-		"--projection-nnz must be greater than 0"
+		args.projection_dims <= embed::EMBED_DIM,
+		"--projection-dims must be less than or equal to {}",
+		embed::EMBED_DIM
 	);
-	if let Some(dims) = args.projection_dims {
-		ensure!(dims >= 2, "--projection-dims must be at least 2");
-		ensure!(
-			dims <= embed::EMBED_DIM,
-			"--projection-dims must be less than or equal to {}",
-			embed::EMBED_DIM
-		);
-	}
 
 	ui_step!("{}", "Connecting to Qdrant…");
 	let store = store::Store::new(&args.qdrant_url).await?;
@@ -71,12 +49,17 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		"{}",
 		format!(
 			"Fetching up to {} vectors (page size {})…",
-			args.max_points, args.page_size
+			args.max_points,
+			config::DEFAULT_CLUSTER_PAGE_SIZE
 		)
 		.as_str()
 	);
 	let points = store
-		.fetch_image_vectors_for_clustering(args.site.as_deref(), args.page_size, args.max_points)
+		.fetch_image_vectors_for_clustering(
+			args.site.as_deref(),
+			config::DEFAULT_CLUSTER_PAGE_SIZE,
+			args.max_points,
+		)
 		.await?;
 
 	if points.is_empty() {
@@ -90,36 +73,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		points.len(),
 		args.min_cluster_size
 	);
-
 	ui_success!("{}", format!("Fetched {} vectors", points.len()).as_str());
 
-	let data = build_cluster_input(
-		&points,
-		args.projection_dims,
-		args.projection_nnz,
-		args.projection_seed,
-	);
-
-	let mut hyper_params = HdbscanHyperParams::builder()
-		.min_cluster_size(args.min_cluster_size)
-		.allow_single_cluster(args.allow_single_cluster);
-
-	if let Some(ms) = args.min_samples {
-		hyper_params = hyper_params.min_samples(ms);
-	}
-	if let Some(max_size) = args.max_cluster_size {
-		hyper_params = hyper_params.max_cluster_size(max_size);
-	}
-	hyper_params = hyper_params.epsilon(args.epsilon);
-
-	ui_step!("{}", "Running HDBSCAN…");
-	let labels = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<i32>> {
-		let clusterer = Hdbscan::new(&data, hyper_params.build());
-		clusterer
-			.cluster()
-			.map_err(|e| anyhow::anyhow!("HDBSCAN failed: {e}"))
-	})
-	.await??;
+	let data = build_cluster_input(&points, args.projection_dims);
+	let labels = run_graph_hdbscan(data, &args).await?;
 
 	let total = labels.len();
 	let mut cluster_members: HashMap<i32, Vec<usize>> = HashMap::new();
@@ -154,21 +111,33 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		.map(|(label, members)| summarize_cluster(label, members, &points))
 		.collect();
 
-	summaries.sort_by(|a, b| b.size.cmp(&a.size).then(a.label.cmp(&b.label)));
+	summaries.sort_by(|a, b| {
+		b.cohesion
+			.partial_cmp(&a.cohesion)
+			.unwrap_or(Ordering::Equal)
+			.then(b.size.cmp(&a.size))
+			.then(a.label.cmp(&b.label))
+	});
 
 	if summaries
 		.iter()
 		.all(|summary| summary.cohesion < config::DEFAULT_CLUSTER_LOW_COHESION_THRESHOLD)
 	{
 		ui_warn!(
-			"Low cohesion detected across all clusters; try higher --min-samples, higher --epsilon, or --max-cluster-size"
+			"Low cohesion detected across clusters; increasing --min-cluster-size can improve precision"
 		);
 	}
+
+	let shown_clusters = summaries.len().min(args.top_clusters);
+	let summaries = summaries
+		.into_iter()
+		.take(shown_clusters)
+		.collect::<Vec<_>>();
 
 	println!();
 	ui_step!(
 		"{}",
-		format!("Cluster previews (up to {} URLs per cluster):", args.limit).as_str()
+		format!("Top {} most cohesive clusters:", shown_clusters).as_str()
 	);
 
 	for summary in &summaries {
@@ -194,7 +163,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 			.iter()
 			.copied()
 			.filter(|index| *index != summary.representative_index)
-			.take(args.limit)
+			.take(5)
 			.collect();
 
 		for (rank, index) in preview_indices.iter().enumerate() {
@@ -220,49 +189,55 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	Ok(())
 }
 
-fn build_cluster_input(
-	points: &[store::ClusterPoint],
-	projection_dims: Option<usize>,
-	projection_nnz: usize,
-	projection_seed: u64,
-) -> Vec<Vec<f32>> {
-	match projection_dims {
-		None => points.iter().map(|point| point.image_vec.clone()).collect(),
-		Some(dims) if dims == embed::EMBED_DIM => {
-			ui_warn!(
-				"--projection-dims equals embedding dimension {}; skipping projection",
-				embed::EMBED_DIM
-			);
-			points.iter().map(|point| point.image_vec.clone()).collect()
-		}
-		Some(dims) => {
-			ui_step!(
-				"{}",
-				format!(
-					"Projecting vectors from {}D to {}D (nnz {}, seed {})…",
-					embed::EMBED_DIM,
-					dims,
-					projection_nnz,
-					projection_seed
-				)
-				.as_str()
-			);
+async fn run_graph_hdbscan(data: Vec<Vec<f32>>, args: &Args) -> anyhow::Result<Vec<i32>> {
+	ui_step!("{}", "Running GraphHDBSCAN with fast defaults…");
 
-			let projection = SparseRandomProjection::new(
-				embed::EMBED_DIM,
-				dims,
-				projection_nnz,
-				projection_seed,
-			);
-			let reduced: Vec<Vec<f32>> = points
-				.iter()
-				.map(|point| projection.project(&point.image_vec))
-				.collect();
+	let params = GraphHdbscanParams {
+		min_cluster_size: args.min_cluster_size,
+		min_samples: args.min_cluster_size,
+		epsilon: config::DEFAULT_CLUSTER_GRAPH_EPSILON,
+		neighbors: config::DEFAULT_CLUSTER_GRAPH_NEIGHBORS,
+		pivots: config::DEFAULT_CLUSTER_GRAPH_PIVOTS,
+		top_pivots: config::DEFAULT_CLUSTER_GRAPH_TOP_PIVOTS,
+		max_candidates: config::DEFAULT_CLUSTER_GRAPH_MAX_CANDIDATES,
+		random_seed: config::DEFAULT_CLUSTER_PROJECTION_SEED,
+	};
 
-			ui_success!("Dimensionality reduction complete");
-			reduced
-		}
+	tokio::task::spawn_blocking(move || graph_hdbscan::cluster(data, params)).await?
+}
+
+fn build_cluster_input(points: &[store::ClusterPoint], projection_dims: usize) -> Vec<Vec<f32>> {
+	if projection_dims == embed::EMBED_DIM {
+		ui_step!(
+			"{}",
+			"Projection skipped (already full embedding dimension)"
+		);
+		return points.iter().map(|point| point.image_vec.clone()).collect();
 	}
+
+	ui_step!(
+		"{}",
+		format!(
+			"Projecting vectors from {}D to {}D for faster clustering…",
+			embed::EMBED_DIM,
+			projection_dims
+		)
+		.as_str()
+	);
+
+	let projection = SparseRandomProjection::new(
+		embed::EMBED_DIM,
+		projection_dims,
+		config::DEFAULT_CLUSTER_PROJECTION_NNZ,
+		config::DEFAULT_CLUSTER_PROJECTION_SEED,
+	);
+	let reduced: Vec<Vec<f32>> = points
+		.iter()
+		.map(|point| projection.project(&point.image_vec))
+		.collect();
+
+	ui_success!("Dimensionality reduction complete");
+	reduced
 }
 
 struct SparseRandomProjection {

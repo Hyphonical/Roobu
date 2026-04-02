@@ -187,10 +187,7 @@ pub enum Commands {
 		)]
 		site: Option<String>,
 
-		#[arg(long, default_value_t = config::DEFAULT_CLUSTER_PAGE_SIZE, help = "Qdrant scroll page size to limit per-request load")]
-		page_size: u32,
-
-		#[arg(long, default_value_t = config::DEFAULT_CLUSTER_MAX_POINTS, help = "Maximum number of points to fetch before running HDBSCAN")]
+		#[arg(long, default_value_t = config::DEFAULT_CLUSTER_MAX_POINTS, help = "Maximum number of points to fetch before clustering")]
 		max_points: usize,
 
 		#[arg(long, default_value_t = config::DEFAULT_CLUSTER_MIN_CLUSTER_SIZE, help = "Minimum number of samples required to form a cluster")]
@@ -198,56 +195,17 @@ pub enum Commands {
 
 		#[arg(
 			long,
-			help = "Optional min_samples override for core-distance neighborhood size"
+			default_value_t = config::DEFAULT_CLUSTER_PROJECTION_DIMS,
+			help = "Projection dimension used before clustering (lower is faster)"
 		)]
-		min_samples: Option<usize>,
-
-		#[arg(
-			short,
-			long,
-			default_value_t = config::DEFAULT_CLUSTER_PREVIEW_LIMIT,
-			help = "Number of sample URLs to print per cluster"
-		)]
-		limit: usize,
+		projection_dims: usize,
 
 		#[arg(
 			long,
-			help = "Optional maximum cluster size before HDBSCAN treats larger groups as unstable"
+			default_value_t = config::DEFAULT_CLUSTER_TOP_CLUSTERS,
+			help = "Maximum number of most cohesive clusters to display"
 		)]
-		max_cluster_size: Option<usize>,
-
-		#[arg(
-			long,
-			default_value_t = config::DEFAULT_CLUSTER_EPSILON,
-			help = "Strictness threshold; higher values favor tighter, more conservative clusters"
-		)]
-		epsilon: f64,
-
-		#[arg(
-			long,
-			help = "Allow a single dominant cluster when data strongly supports it"
-		)]
-		allow_single_cluster: bool,
-
-		#[arg(
-			long,
-			help = "Optional dimensionality reduction target before HDBSCAN (for example: 256)"
-		)]
-		projection_dims: Option<usize>,
-
-		#[arg(
-			long,
-			default_value_t = config::DEFAULT_CLUSTER_PROJECTION_NNZ,
-			help = "Signed sparse projection density per source dimension (higher preserves more detail but is slower)"
-		)]
-		projection_nnz: usize,
-
-		#[arg(
-			long,
-			default_value_t = config::DEFAULT_CLUSTER_PROJECTION_SEED,
-			help = "Seed for deterministic sparse random projection"
-		)]
-		projection_seed: u64,
+		top_clusters: usize,
 	},
 
 	Stats {
@@ -322,6 +280,27 @@ mod tests {
 				assert_eq!(width, config::DEFAULT_STATS_BAR_WIDTH);
 			}
 			_ => panic!("expected stats command"),
+		}
+	}
+
+	#[test]
+	fn cluster_command_parses_with_defaults() {
+		let cli = Cli::try_parse_from(["roobu", "cluster"]).expect("cluster args should parse");
+
+		match cli.command {
+			Commands::Cluster {
+				max_points,
+				min_cluster_size,
+				projection_dims,
+				top_clusters,
+				..
+			} => {
+				assert_eq!(max_points, config::DEFAULT_CLUSTER_MAX_POINTS);
+				assert_eq!(min_cluster_size, config::DEFAULT_CLUSTER_MIN_CLUSTER_SIZE);
+				assert_eq!(projection_dims, config::DEFAULT_CLUSTER_PROJECTION_DIMS);
+				assert_eq!(top_clusters, config::DEFAULT_CLUSTER_TOP_CLUSTERS);
+			}
+			_ => panic!("expected cluster command"),
 		}
 	}
 }

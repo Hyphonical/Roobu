@@ -116,47 +116,33 @@ Each result prints:
 
 ## cluster
 
-Runs HDBSCAN over stored image vectors, optionally with dimensionality reduction.
+Runs GraphHDBSCAN (graph-based approximation) over stored image vectors with optional dimensionality reduction.
 
 ### Key Options
 
 - --site
   - Restrict vector fetch to one site payload value.
-- --page-size
-  - Qdrant scroll page size.
 - --max-points
   - Maximum number of vectors loaded for clustering.
 - --min-cluster-size
   - Minimum samples to form a cluster.
-- --min-samples
-  - Optional neighborhood override.
-- --max-cluster-size
-  - Optional upper bound for cluster size stability.
-- --epsilon
-  - Strictness threshold.
-- --allow-single-cluster
-  - Allow one dominant cluster.
 - --projection-dims
-  - Optional lower dimension target before clustering.
-- --projection-nnz
-  - Sparse projection density per source dimension.
-- --projection-seed
-  - Deterministic seed for projection mapping.
-- --limit
-  - Sample URL count shown per cluster preview.
+  - Lower-dimension target before clustering (faster at lower values).
+- --top-clusters
+  - Maximum number of highest-cohesion clusters shown in output.
 
 ### Validation Rules
 
-Cluster validates ranges for size, epsilon, dimensions, and projection settings before execution.
+Cluster validates ranges for size and projection settings before execution.
 
 ### Output Summary
 
 - number of clusters
 - total samples
 - noise count and percentage
-- per-cluster cohesion
+- top clusters ranked by cohesion
 - representative post URL
-- preview member URLs
+- up to five preview member URLs per shown cluster
 
 ## stats
 
