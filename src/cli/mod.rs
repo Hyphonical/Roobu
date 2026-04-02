@@ -1,8 +1,15 @@
+//! CLI argument definitions for the Roobu application.
+//!
+//! Defines the top-level [`Cli`] struct and [`Commands`] enum that map to
+//! the application's subcommands: ingest, search, cluster, stats, and serve.
+
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::{config, embed, sites::SiteKind};
+use crate::config;
+use crate::embed;
+use crate::sites::SiteKind;
 
 #[derive(Parser)]
 #[command(

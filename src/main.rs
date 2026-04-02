@@ -4,8 +4,8 @@
 //! embeds them using ONNX-based SigLIP models, and stores the resulting
 //! vectors in Qdrant for semantic search.
 
-mod checkpoint;
 mod cli;
+mod cluster;
 mod commands;
 mod config;
 mod embed;

@@ -5,18 +5,17 @@
 //! delegates to the appropriate handler.
 
 mod cluster;
-mod graph_hdbscan;
 mod ingest;
 mod search;
 mod serve;
 mod stats;
 
-use crate::cli;
+use crate::cli::Commands;
 
 /// Dispatch to the appropriate command handler based on the parsed CLI arguments.
-pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
+pub async fn run(command: Commands) -> anyhow::Result<()> {
 	match command {
-		cli::Commands::Ingest {
+		Commands::Ingest {
 			site,
 			qdrant_url,
 			models_dir,
@@ -56,7 +55,7 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 			})
 			.await
 		}
-		cli::Commands::Search {
+		Commands::Search {
 			query,
 			image,
 			limit,
@@ -78,7 +77,7 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 			})
 			.await
 		}
-		cli::Commands::Cluster {
+		Commands::Cluster {
 			qdrant_url,
 			site,
 			max_points,
@@ -96,7 +95,7 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 			})
 			.await
 		}
-		cli::Commands::Stats {
+		Commands::Stats {
 			qdrant_url,
 			page_size,
 			width,
@@ -108,7 +107,7 @@ pub async fn run(command: cli::Commands) -> anyhow::Result<()> {
 			})
 			.await
 		}
-		cli::Commands::Serve {
+		Commands::Serve {
 			qdrant_url,
 			models_dir,
 			address,

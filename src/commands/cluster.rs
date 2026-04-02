@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use anyhow::ensure;
 use owo_colors::OwoColorize;
 
-use super::graph_hdbscan::{self, GraphHdbscanParams};
+use crate::cluster::GraphHdbscanParams;
+use crate::cluster::graph_hdbscan;
 use crate::config;
 use crate::embed;
 use crate::store;
@@ -77,7 +78,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	ui_success!("{}", format!("Fetched {} vectors", points.len()).as_str());
 
 	let data = build_cluster_input(&points, args.projection_dims);
-	let labels = run_graph_hdbscan(data, &args).await?;
+	let labels = run_cluster(data, &args).await?;
 
 	let total = labels.len();
 	let mut cluster_members: HashMap<i32, Vec<usize>> = HashMap::new();
@@ -190,8 +191,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	Ok(())
 }
 
-async fn run_graph_hdbscan(data: Vec<Vec<f32>>, args: &Args) -> anyhow::Result<Vec<i32>> {
-	ui_step!("{}", "Running GraphHDBSCAN with fast defaults…");
+async fn run_cluster(data: Vec<Vec<f32>>, args: &Args) -> anyhow::Result<Vec<i32>> {
+	ui_step!("Running GraphHDBSCAN with fast defaults…");
 
 	let params = GraphHdbscanParams {
 		min_cluster_size: args.min_cluster_size,

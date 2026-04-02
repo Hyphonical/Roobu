@@ -1,6 +1,11 @@
+//! Ingest cycle logic — single-site fetch, download, embed, and upsert.
+//!
+//! Handles one complete cycle of fetching new posts from a site, downloading
+//! thumbnails, embedding them, and upserting into Qdrant.
+
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
@@ -8,14 +13,15 @@ use image::DynamicImage;
 use owo_colors::OwoColorize;
 use tokio::sync::{Semaphore, mpsc};
 
-use crate::checkpoint::{self, CheckpointMap};
 use crate::embed::Embedder;
 use crate::error::RoobuError;
-use crate::sites::{BooruClient, Post, SiteClient, validate_downloaded_image};
+use crate::ingest::checkpoint;
+use crate::ingest::checkpoint::CheckpointMap;
+use crate::sites::{BooruClient, Post, validate_downloaded_image};
 use crate::store::{PostEmbedding, Store};
-use crate::ui::header;
 use crate::{ui_detail, ui_step, ui_success, ui_warn};
 
+/// Configuration for the ingest pipeline.
 pub struct IngestConfig {
 	pub poll_interval_secs: u64,
 	pub batch_size: usize,
@@ -23,44 +29,36 @@ pub struct IngestConfig {
 	pub site_fetch_timeout_secs: u64,
 }
 
-struct SiteLoopState {
-	client: SiteClient,
-	site: &'static str,
-	last_id: u64,
-	resume_announced: bool,
+/// State for a single site in the multi-site ingest loop.
+pub struct SiteLoopState {
+	pub client: crate::sites::SiteClient,
+	pub site: &'static str,
+	pub last_id: u64,
+	pub resume_announced: bool,
 }
 
-struct CycleContext<'a> {
-	store: &'a Store,
-	embedder: Arc<Embedder>,
-	checkpoint_path: &'a Path,
-	config: &'a IngestConfig,
-	ckpt: &'a mut CheckpointMap,
+/// Context shared across pipeline stages within a cycle.
+pub struct CycleContext<'a> {
+	pub store: &'a Store,
+	pub embedder: Arc<Embedder>,
+	pub checkpoint_path: &'a Path,
+	pub config: &'a IngestConfig,
+	pub ckpt: &'a mut CheckpointMap,
 }
 
-struct DownloadedBatch {
-	batch_len: usize,
-	downloaded: Vec<(Post, DynamicImage)>,
-}
-
-struct EmbeddedBatch {
-	valid_count: usize,
-	skipped_count: usize,
-	new_last: u64,
-	embeddings: Vec<PostEmbedding>,
-}
-
-struct CycleStats {
-	fetched_posts: usize,
-	valid_images: usize,
-	skipped_images: usize,
-	upserted_posts: usize,
-	batch_count: usize,
-	elapsed: Duration,
+/// Statistics for a single ingest cycle.
+pub struct CycleStats {
+	pub fetched_posts: usize,
+	pub valid_images: usize,
+	pub skipped_images: usize,
+	pub upserted_posts: usize,
+	pub batch_count: usize,
+	pub elapsed: Duration,
 }
 
 impl CycleStats {
-	fn empty(elapsed: Duration) -> Self {
+	/// Create empty stats with the given elapsed time.
+	pub fn empty(elapsed: Duration) -> Self {
 		Self {
 			fetched_posts: 0,
 			valid_images: 0,
@@ -71,7 +69,8 @@ impl CycleStats {
 		}
 	}
 
-	fn posts_per_second(&self) -> f64 {
+	/// Posts upserted per second.
+	pub fn posts_per_second(&self) -> f64 {
 		let secs = self.elapsed.as_secs_f64();
 		if self.upserted_posts == 0 || secs <= f64::EPSILON {
 			0.0
@@ -80,7 +79,8 @@ impl CycleStats {
 		}
 	}
 
-	fn seconds_per_post(&self) -> f64 {
+	/// Seconds per post upserted.
+	pub fn seconds_per_post(&self) -> f64 {
 		let secs = self.elapsed.as_secs_f64();
 		if self.upserted_posts == 0 || secs <= f64::EPSILON {
 			0.0
@@ -90,10 +90,38 @@ impl CycleStats {
 	}
 }
 
-const DOWNLOAD_QUEUE_MAX_DEPTH: usize = 4;
-const EMBEDDING_QUEUE_MAX_DEPTH: usize = 4;
+/// Format a duration as a human-readable string.
+pub fn format_elapsed(duration: Duration) -> String {
+	format!("{:.2}s", duration.as_secs_f64())
+}
 
-async fn download_batch(
+/// Print cycle statistics to the terminal.
+pub fn print_cycle_stats(stats: &CycleStats) {
+	ui_detail!(
+		"Cycle",
+		"{} total  ·  {} upserted  ·  {} posts/s  ·  {} s/post",
+		format_elapsed(stats.elapsed).bold().bright_white(),
+		stats.upserted_posts.bold().bright_white(),
+		format!("{:.2}", stats.posts_per_second())
+			.bold()
+			.bright_white(),
+		format!("{:.3}", stats.seconds_per_post())
+			.bold()
+			.bright_white()
+	);
+
+	ui_detail!(
+		"Totals",
+		"{} fetched  ·  {} valid  ·  {} skipped  ·  {} batches",
+		stats.fetched_posts.bold().bright_white(),
+		stats.valid_images.bold().bright_white(),
+		stats.skipped_images.bold().bright_white(),
+		stats.batch_count.bold().bright_white()
+	);
+}
+
+/// Download a batch of post thumbnails concurrently.
+pub async fn download_batch(
 	client: &impl BooruClient,
 	batch: Vec<Post>,
 	download_concurrency: usize,
@@ -134,7 +162,14 @@ async fn download_batch(
 	}
 }
 
-async fn embed_downloaded_batch(
+/// A batch of downloaded posts with their images.
+pub struct DownloadedBatch {
+	pub batch_len: usize,
+	pub downloaded: Vec<(Post, DynamicImage)>,
+}
+
+/// Embed a downloaded batch and return the results.
+pub async fn embed_downloaded_batch(
 	embedder: &Arc<Embedder>,
 	batch: DownloadedBatch,
 ) -> anyhow::Result<Option<EmbeddedBatch>> {
@@ -153,17 +188,13 @@ async fn embed_downloaded_batch(
 
 	ui_detail!(
 		"Valid",
-		"{}",
-		format!(
-			"{} images{}",
-			valid_count.bold().bright_white(),
-			if skipped > 0 {
-				format!("  ·  {} skipped", skipped)
-			} else {
-				String::new()
-			}
-		)
-		.as_str()
+		"{} images{}",
+		valid_count.bold().bright_white(),
+		if skipped > 0 {
+			format!("  ·  {} skipped", skipped)
+		} else {
+			String::new()
+		}
 	);
 
 	let posts_for_embed: Vec<Post> = downloaded.iter().map(|(p, _)| p.clone()).collect();
@@ -171,8 +202,8 @@ async fn embed_downloaded_batch(
 
 	let embedder_clone = embedder.clone();
 	let new_last = posts_for_embed.iter().map(|p| p.id).max().unwrap_or(0);
-	let ingestion_date = SystemTime::now()
-		.duration_since(UNIX_EPOCH)
+	let ingestion_date = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
 		.map(|d| d.as_secs() as i64)
 		.unwrap_or_default();
 	let embeddings =
@@ -210,6 +241,15 @@ async fn embed_downloaded_batch(
 	}))
 }
 
+/// A batch of embedded posts ready for upsertion.
+pub struct EmbeddedBatch {
+	pub valid_count: usize,
+	pub skipped_count: usize,
+	pub new_last: u64,
+	pub embeddings: Vec<PostEmbedding>,
+}
+
+/// Process an embedded batch by upserting into Qdrant and updating the checkpoint.
 async fn process_embedded_batch(
 	site: &'static str,
 	last_id: &mut u64,
@@ -232,52 +272,25 @@ async fn process_embedded_batch(
 	}
 
 	ui_success!(
-		"{}",
-		format!(
-			"Upserted {} posts  ·  checkpoint {}",
-			valid_count.bold().bright_white(),
-			(*last_id).bold().bright_white()
-		)
-		.as_str()
+		"Upserted {} posts  ·  checkpoint {}",
+		valid_count.bold().bright_white(),
+		(*last_id).bold().bright_white()
 	);
 
 	Ok(())
 }
 
-fn format_elapsed(duration: Duration) -> String {
-	format!("{:.2}s", duration.as_secs_f64())
-}
-
-fn print_cycle_stats(stats: &CycleStats) {
-	ui_detail!(
-		"Cycle",
-		"{} total  ·  {} upserted  ·  {} posts/s  ·  {} s/post",
-		format_elapsed(stats.elapsed).bold().bright_white(),
-		stats.upserted_posts.bold().bright_white(),
-		format!("{:.2}", stats.posts_per_second())
-			.bold()
-			.bright_white(),
-		format!("{:.3}", stats.seconds_per_post())
-			.bold()
-			.bright_white()
-	);
-
-	ui_detail!(
-		"Totals",
-		"{} fetched  ·  {} valid  ·  {} skipped  ·  {} batches",
-		stats.fetched_posts.bold().bright_white(),
-		stats.valid_images.bold().bright_white(),
-		stats.skipped_images.bold().bright_white(),
-		stats.batch_count.bold().bright_white()
-	);
-}
-
-async fn run_cycle(
+/// Run a single ingest cycle for a site.
+///
+/// Fetches new posts, downloads thumbnails, embeds them, and upserts into Qdrant.
+pub async fn run_cycle(
 	client: &impl BooruClient,
 	site: &'static str,
 	last_id: &mut u64,
 	context: &mut CycleContext<'_>,
 ) -> anyhow::Result<CycleStats> {
+	use std::time::Instant;
+
 	let cycle_start = Instant::now();
 	let fetch_timeout = Duration::from_secs(context.config.site_fetch_timeout_secs.max(1));
 	let posts = match tokio::time::timeout(fetch_timeout, client.fetch_recent(*last_id)).await {
@@ -291,15 +304,12 @@ async fn run_cycle(
 	let posts: Vec<Post> = posts.into_iter().filter(|p| p.passes_preflight()).collect();
 
 	if posts.is_empty() {
-		ui_step!("{}", "No new posts");
+		ui_step!("No new posts");
 		tracing::debug!(site, "no new posts");
 		return Ok(CycleStats::empty(cycle_start.elapsed()));
 	}
 
-	ui_step!(
-		"{}",
-		format!("Fetched {} new posts", posts.len().bold().bright_white()).as_str()
-	);
+	ui_step!("Fetched {} new posts", posts.len().bold().bright_white());
 
 	let batch_size = context.config.batch_size;
 	let download_concurrency = context.config.download_concurrency;
@@ -309,6 +319,9 @@ async fn run_cycle(
 	if download_concurrency == 0 {
 		anyhow::bail!("{site}: download concurrency must be greater than 0")
 	}
+
+	const DOWNLOAD_QUEUE_MAX_DEPTH: usize = 4;
+	const EMBEDDING_QUEUE_MAX_DEPTH: usize = 4;
 
 	let fetched_posts = posts.len();
 	let batch_count = fetched_posts.div_ceil(batch_size);
@@ -371,159 +384,4 @@ async fn run_cycle(
 		batch_count,
 		elapsed: cycle_start.elapsed(),
 	})
-}
-
-pub async fn run(
-	client: impl BooruClient,
-	store: &Store,
-	embedder: Arc<Embedder>,
-	checkpoint_path: &Path,
-	config: &IngestConfig,
-) -> anyhow::Result<()> {
-	let site = client.site_name();
-	header(&format!("ingest · {site}"));
-
-	let mut ckpt: CheckpointMap = checkpoint::load(checkpoint_path);
-	let mut last_id = checkpoint::get(&ckpt, site);
-
-	ui_step!(
-		"{}",
-		format!("Resuming from post {}", last_id.bold().bright_white()).as_str()
-	);
-
-	let mut context = CycleContext {
-		store,
-		embedder,
-		checkpoint_path,
-		config,
-		ckpt: &mut ckpt,
-	};
-
-	loop {
-		let cycle_start = Instant::now();
-		match run_cycle(&client, site, &mut last_id, &mut context).await {
-			Ok(stats) => print_cycle_stats(&stats),
-			Err(error) => {
-				let elapsed = cycle_start.elapsed();
-				let error_chain = format!("{error:#}");
-				ui_warn!(
-					"{}",
-					format!(
-						"{site} cycle failed ({error_chain}) after {} · skipping until next poll",
-						format_elapsed(elapsed)
-					)
-					.as_str()
-				);
-				tracing::warn!(
-					site,
-					error = %error,
-					error_chain = %error_chain,
-					elapsed_secs = elapsed.as_secs_f64(),
-					"site ingest cycle failed; continuing"
-				);
-			}
-		}
-
-		tracing::debug!(
-			site,
-			sleep_secs = config.poll_interval_secs,
-			"ingest loop sleep"
-		);
-
-		tokio::time::sleep(std::time::Duration::from_secs(config.poll_interval_secs)).await;
-	}
-}
-
-pub async fn run_multi(
-	clients: Vec<SiteClient>,
-	store: &Store,
-	embedder: Arc<Embedder>,
-	checkpoint_path: &Path,
-	config: &IngestConfig,
-) -> anyhow::Result<()> {
-	if clients.is_empty() {
-		anyhow::bail!("no ingest clients configured");
-	}
-
-	let mut ckpt = checkpoint::load(checkpoint_path);
-	let mut states: Vec<SiteLoopState> = clients
-		.into_iter()
-		.map(|client| {
-			let site = client.site_name();
-			let last_id = checkpoint::get(&ckpt, site);
-			SiteLoopState {
-				client,
-				site,
-				last_id,
-				resume_announced: false,
-			}
-		})
-		.collect();
-
-	let mut context = CycleContext {
-		store,
-		embedder,
-		checkpoint_path,
-		config,
-		ckpt: &mut ckpt,
-	};
-
-	loop {
-		// Keep per-site cadence close to the target by subtracting ingest runtime from sleep.
-		let site_count = states.len().max(1) as f64;
-		let per_site_target =
-			Duration::from_secs_f64((config.poll_interval_secs as f64 / site_count).max(1.0));
-
-		for state in &mut states {
-			header(&format!("ingest · {}", state.site));
-			if !state.resume_announced {
-				ui_step!(
-					"{}",
-					format!("Resuming from post {}", state.last_id.bold().bright_white()).as_str()
-				);
-				state.resume_announced = true;
-			}
-
-			let cycle_start = Instant::now();
-			match run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await {
-				Ok(cycle_stats) => print_cycle_stats(&cycle_stats),
-				Err(error) => {
-					let elapsed = cycle_start.elapsed();
-					let error_chain = format!("{error:#}");
-					ui_warn!(
-						"{}",
-						format!(
-							"{} cycle failed ({error_chain}) after {} · skipping this site for now",
-							state.site,
-							format_elapsed(elapsed)
-						)
-						.as_str()
-					);
-					tracing::warn!(
-						site = state.site,
-						error = %error,
-						error_chain = %error_chain,
-						elapsed_secs = elapsed.as_secs_f64(),
-						"site ingest cycle failed in all-sites mode; continuing"
-					);
-				}
-			}
-
-			let elapsed = cycle_start.elapsed();
-			let sleep_duration = if elapsed >= per_site_target {
-				Duration::from_secs(1)
-			} else {
-				per_site_target - elapsed
-			};
-
-			tracing::debug!(
-				site = state.site,
-				target_secs = per_site_target.as_secs_f64(),
-				elapsed_secs = elapsed.as_secs_f64(),
-				sleep_secs = sleep_duration.as_secs_f64(),
-				"per-site ingest loop sleep"
-			);
-			tokio::time::sleep(sleep_duration).await;
-		}
-	}
 }

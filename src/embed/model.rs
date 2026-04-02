@@ -1,32 +1,21 @@
-//! ONNX-based embedding using SigLIP vision and text models.
+//! ONNX model session creation and management.
 //!
-//! Provides the [`Embedder`] struct which loads quantized ONNX models and
-//! produces 1536-dimensional embeddings for images and text. Supports batch
-//! processing, L2 normalization, and hybrid text+image query blending.
+//! Handles loading vision and text models with optimization level configuration
+//! and fallback logic for the text model.
 
 use std::path::Path;
 use std::sync::Mutex;
 
 use clap::ValueEnum;
-use image::{DynamicImage, imageops::FilterType};
-use ndarray::{Array2, Array4, s};
-use ort::{
-	inputs,
-	session::{
-		Session,
-		builder::{AutoDevicePolicy, GraphOptimizationLevel},
-	},
-	value::Tensor,
+use ort::session::{
+	Session,
+	builder::{AutoDevicePolicy, GraphOptimizationLevel},
 };
 use tokenizers::Tokenizer;
 
 use crate::config;
+use crate::embed::EMBED_DIM;
 use crate::error::RoobuError;
-
-/// The dimensionality of SigLIP embeddings produced by the loaded models.
-pub const EMBED_DIM: usize = 1536;
-
-// ── Configuration Types ─────────────────────────────────────────────────────
 
 /// ONNX graph optimization intensity.
 ///
@@ -67,8 +56,6 @@ pub enum ModelLoad {
 	/// Load both text and vision models (hybrid search).
 	TextAndVision,
 }
-
-// ── Embedder ────────────────────────────────────────────────────────────────
 
 /// SigLIP embedder for producing vector representations of images and text.
 ///
@@ -144,34 +131,8 @@ impl Embedder {
 	///
 	/// Resizes the image so the shorter edge matches [`config::SIGLIP_IMAGE_SIZE`],
 	/// then center-crops to a square. Uses Lanczos3 resampling for quality.
-	pub fn preprocess(img: &DynamicImage) -> DynamicImage {
-		let image_size = config::SIGLIP_IMAGE_SIZE;
-		let (w, h) = (img.width(), img.height());
-		let scale = image_size as f32 / w.min(h) as f32;
-		let new_w = (w as f32 * scale).round() as u32;
-		let new_h = (h as f32 * scale).round() as u32;
-		let resized = img.resize_exact(new_w, new_h, FilterType::Lanczos3);
-		let x = new_w.saturating_sub(image_size) / 2;
-		let y = new_h.saturating_sub(image_size) / 2;
-		resized.crop_imm(x, y, image_size, image_size)
-	}
-
-	/// Convert a preprocessed image into a normalized NCHW tensor.
-	///
-	/// Pixel values are scaled from [0, 255] to [-1, 1] as expected by SigLIP.
-	fn to_tensor(img: &DynamicImage) -> Array4<f32> {
-		let image_size = config::SIGLIP_IMAGE_SIZE as usize;
-		let rgb = img.to_rgb8();
-		let mut arr = Array4::<f32>::zeros((1, 3, image_size, image_size));
-		for y in 0..image_size {
-			for x in 0..image_size {
-				let p = rgb.get_pixel(x as u32, y as u32);
-				for c in 0..3 {
-					arr[[0, c, y, x]] = p[c] as f32 / 255.0 * 2.0 - 1.0;
-				}
-			}
-		}
-		arr
+	pub fn preprocess(img: &image::DynamicImage) -> image::DynamicImage {
+		super::preprocess::preprocess_image(img)
 	}
 
 	/// Embed a batch of images into L2-normalized vectors.
@@ -185,7 +146,7 @@ impl Embedder {
 	/// or the ONNX inference fails.
 	pub fn embed_images(
 		&self,
-		images: &[DynamicImage],
+		images: &[image::DynamicImage],
 	) -> Result<Vec<[f32; EMBED_DIM]>, RoobuError> {
 		let vision = self
 			.vision
@@ -198,19 +159,19 @@ impl Embedder {
 
 		let n = images.len();
 		let image_size = config::SIGLIP_IMAGE_SIZE as usize;
-		let mut batch = Array4::<f32>::zeros((n, 3, image_size, image_size));
+		let mut batch = ndarray::Array4::<f32>::zeros((n, 3, image_size, image_size));
 		for (i, img) in images.iter().enumerate() {
-			let t = Self::to_tensor(img);
+			let t = super::preprocess::image_to_tensor(img);
 			batch
-				.slice_mut(s![i, .., .., ..])
-				.assign(&t.slice(s![0, .., .., ..]));
+				.slice_mut(ndarray::s![i, .., .., ..])
+				.assign(&t.slice(ndarray::s![0, .., .., ..]));
 		}
 
-		let vision_input = Tensor::from_array(batch)?;
+		let vision_input = ort::value::Tensor::from_array(batch)?;
 		let mut session = vision
 			.lock()
 			.map_err(|_| RoobuError::Tokenizer("vision mutex poisoned".into()))?;
-		let outputs = session.run(inputs!["pixel_values" => vision_input])?;
+		let outputs = session.run(ort::inputs!["pixel_values" => vision_input])?;
 		let (shape, data) = outputs["pooler_output"].try_extract_tensor::<f32>()?;
 
 		expect_shape(shape, n, EMBED_DIM)?;
@@ -225,7 +186,7 @@ impl Embedder {
 	}
 
 	/// Embed a single image into an L2-normalized vector.
-	pub fn embed_image(&self, img: &DynamicImage) -> Result<[f32; EMBED_DIM], RoobuError> {
+	pub fn embed_image(&self, img: &image::DynamicImage) -> Result<[f32; EMBED_DIM], RoobuError> {
 		Ok(self.embed_images(std::slice::from_ref(img))?[0])
 	}
 
@@ -260,14 +221,14 @@ impl Embedder {
 			flat_ids.extend(encode_text_ids(tokenizer, text)?);
 		}
 
-		let input = Array2::from_shape_vec((rows, seq_len), flat_ids)
+		let input = ndarray::Array2::from_shape_vec((rows, seq_len), flat_ids)
 			.map_err(|e| RoobuError::Tokenizer(e.to_string()))?;
-		let tensor = Tensor::from_array(input)?;
+		let tensor = ort::value::Tensor::from_array(input)?;
 
 		let mut session = text_session
 			.lock()
 			.map_err(|_| RoobuError::Tokenizer("text mutex poisoned".into()))?;
-		let outputs = session.run(inputs!["input_ids" => tensor])?;
+		let outputs = session.run(ort::inputs!["input_ids" => tensor])?;
 		let (shape, data) = outputs["pooler_output"].try_extract_tensor::<f32>()?;
 
 		expect_shape(shape, rows, EMBED_DIM)?;
@@ -451,22 +412,4 @@ fn l2_normalize(slice: &[f32]) -> Result<[f32; EMBED_DIM], RoobuError> {
 		out.copy_from_slice(slice);
 	}
 	Ok(out)
-}
-
-/// Blend text and image embeddings with a weighted combination.
-///
-/// The result is L2-normalized so it can be used directly for cosine
-/// similarity search. An `image_weight` of 0.0 returns the text embedding,
-/// 1.0 returns the image embedding, and values in between produce a hybrid.
-pub fn blend_embeddings(
-	text: &[f32; EMBED_DIM],
-	image: &[f32; EMBED_DIM],
-	image_weight: f32,
-) -> Result<[f32; EMBED_DIM], RoobuError> {
-	let text_weight = 1.0 - image_weight;
-	let mut blended = [0.0f32; EMBED_DIM];
-	for i in 0..EMBED_DIM {
-		blended[i] = text_weight * text[i] + image_weight * image[i];
-	}
-	l2_normalize(&blended)
 }
