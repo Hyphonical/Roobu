@@ -1,9 +1,8 @@
 use reqwest::Client;
 use serde::Deserialize;
-use std::time::Duration;
-use tokio::time::sleep;
 
 use super::common::{first_url_or_empty, normalize_url};
+use super::http_client::{build_http_client, get_text_with_retry};
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -11,9 +10,6 @@ const POSTS_URL: &str = "https://civitai.com/api/v1/images";
 const SITE_NAME: &str = "civitai";
 const SITE_NAMESPACE: u64 = 12;
 const MAX_POSTS_PER_PAGE: u16 = 200;
-const MAX_RETRIES: u32 = 6;
-const INITIAL_BACKOFF: Duration = Duration::from_secs(5);
-const MAX_BACKOFF: Duration = Duration::from_secs(300);
 
 pub struct CivitaiClient {
 	http: Client,
@@ -21,40 +17,14 @@ pub struct CivitaiClient {
 
 impl CivitaiClient {
 	pub fn new() -> Result<Self, RoobuError> {
-		let cargo_version = env!("CARGO_PKG_VERSION");
-		let http = Client::builder()
-			.user_agent(format!("roobu/{} (semantic search indexer)", cargo_version))
-			.timeout(Duration::from_secs(30))
-			.build()?;
-
-		Ok(Self { http })
+		Ok(Self {
+			http: build_http_client()?,
+		})
 	}
 
 	async fn fetch_page_raw(&self, nsfw: bool) -> Result<String, RoobuError> {
 		let url = format!("{POSTS_URL}?limit={MAX_POSTS_PER_PAGE}&sort=Newest&nsfw={nsfw}");
-
-		let mut delay = INITIAL_BACKOFF;
-
-		for attempt in 0..=MAX_RETRIES {
-			let resp = self.http.get(&url).send().await?;
-			let status = resp.status();
-
-			if status.is_success() {
-				let body = resp.text().await?;
-				return Ok(body);
-			}
-
-			if (status.is_server_error() || status.as_u16() == 429) && attempt < MAX_RETRIES {
-				tracing::warn!(status = %status, attempt, "retrying after backoff");
-				sleep(delay).await;
-				delay = (delay * 2).min(MAX_BACKOFF);
-				continue;
-			}
-
-			return Err(RoobuError::Api(format!("HTTP {status}")));
-		}
-
-		Err(RoobuError::Api("max retries exceeded".into()))
+		get_text_with_retry(&self.http, &url).await
 	}
 
 	fn parse_posts_from_body(&self, body: &str, last_id: u64) -> Result<Vec<Post>, RoobuError> {

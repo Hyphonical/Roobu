@@ -49,6 +49,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # ── Terminal Output ────────────────────────────────────────
 owo-colors   = { version = "4", features = ["supports-colors"] }
 
+# ── Web API (REST + WebSocket) ─────────────────────────────
+axum         = { version = "0.8", features = ["ws", "json"] }
+tower        = "0.5"
+tower-http   = { version = "0.6", features = ["cors", "trace"] }
+
 # ── Release Profile ────────────────────────────────────────
 [profile.release]
 opt-level     = 3

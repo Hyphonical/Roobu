@@ -6,34 +6,44 @@ use image::DynamicImage;
 use owo_colors::OwoColorize;
 
 use crate::embed::{self, OnnxOptimizationIntensity};
-use crate::store;
-use crate::ui::{header, ui_step, ui_success, ui_warn};
+use crate::store::{self, SearchResult, Store};
+use crate::ui::header;
+use crate::{ui_step, ui_success, ui_warn};
 
-pub struct Args {
-	pub query: Option<String>,
-	pub image: Option<PathBuf>,
+// ── Application Service (pure logic, reusable by CLI and Web) ────────────────
+
+/// Input parameters for a search operation.
+pub struct SearchRequest {
+	pub text_query: Option<String>,
+	pub image_path: Option<PathBuf>,
 	pub limit: u64,
-	pub qdrant_url: String,
-	pub models_dir: PathBuf,
-	pub weight: f32,
-	pub onnx_optimization: OnnxOptimizationIntensity,
-	pub site: Option<String>,
+	pub site_filter: Option<String>,
+	pub image_weight: f32,
 }
 
-fn effective_image_weight(
+/// Result of a search operation with metadata.
+pub struct SearchResponse {
+	pub results: Vec<SearchResult>,
+	pub mode_label: String,
+	pub blend_label: Option<String>,
+	pub query_summary: String,
+}
+
+/// Compute the effective image weight based on query mode and requested weight.
+pub fn effective_image_weight(
 	has_text_query: bool,
 	has_image_query: bool,
 	requested_weight: f32,
 ) -> f32 {
 	match (has_text_query, has_image_query) {
-		(true, true) => requested_weight,
 		(true, false) => 0.0,
 		(false, true) => 1.0,
-		(false, false) => requested_weight,
+		_ => requested_weight,
 	}
 }
 
-fn blend_label(image_weight: f32) -> Option<String> {
+/// Generate a blend label for hybrid search modes.
+pub fn blend_label(image_weight: f32) -> Option<String> {
 	if image_weight > 0.0 && image_weight < 1.0 {
 		Some(format!(
 			"  ·  blend image={:.1} text={:.1}",
@@ -55,6 +65,104 @@ fn load_query_image(path: &std::path::Path) -> anyhow::Result<DynamicImage> {
 			path.display()
 		)
 	})
+}
+
+/// Execute a search operation. This is the pure application logic that can be
+/// reused by both CLI and web handlers.
+pub async fn execute_search(
+	request: SearchRequest,
+	embedder: &Arc<embed::Embedder>,
+	store: &Store,
+) -> anyhow::Result<SearchResponse> {
+	let has_text_query = request.text_query.is_some();
+	let has_image_query = request.image_path.is_some();
+
+	if !has_text_query && !has_image_query {
+		bail!("provide a text query, --image, or both");
+	}
+
+	let query_image_weight =
+		effective_image_weight(has_text_query, has_image_query, request.image_weight);
+
+	let mode_label = match (has_text_query, has_image_query) {
+		(true, true) => "text+image",
+		(true, false) => "text",
+		(false, true) => "image",
+		(false, false) => unreachable!("validated above"),
+	};
+
+	let header_query = match (&request.text_query, &request.image_path) {
+		(Some(q), Some(img)) => format!("\"{q}\" + {}", img.display()),
+		(Some(q), None) => format!("\"{q}\""),
+		(None, Some(img)) => img.display().to_string(),
+		(None, None) => unreachable!("validated above"),
+	};
+
+	let query_vec = tokio::task::spawn_blocking({
+		let embedder = Arc::clone(embedder);
+		let text_query = request.text_query.clone();
+		let image = request.image_path.clone();
+		let image_weight = query_image_weight;
+
+		move || -> anyhow::Result<[f32; embed::EMBED_DIM]> {
+			match (text_query, image) {
+				(Some(text), Some(image_path)) => {
+					let image = load_query_image(&image_path)?;
+					let preprocessed = embed::Embedder::preprocess(&image);
+					let image_vec = embedder.embed_image(&preprocessed)?;
+					let text_vec = embedder.embed_text(&text)?;
+					embed::blend_embeddings(&text_vec, &image_vec, image_weight)
+						.map_err(anyhow::Error::from)
+				}
+				(Some(text), None) => Ok(embedder.embed_text(&text)?),
+				(None, Some(image_path)) => {
+					let image = load_query_image(&image_path)?;
+					let preprocessed = embed::Embedder::preprocess(&image);
+					Ok(embedder.embed_image(&preprocessed)?)
+				}
+				(None, None) => bail!("provide a text query, --image, or both"),
+			}
+		}
+	})
+	.await??;
+
+	ensure!(
+		query_vec.iter().all(|value| value.is_finite()),
+		"generated query embedding contains non-finite values; verify text_model_q4f16.onnx and tokenizer.json match the indexed model set"
+	);
+	let query_norm_sq: f32 = query_vec.iter().map(|value| value * value).sum();
+	ensure!(
+		query_norm_sq > 1e-6,
+		"generated query embedding is near zero; verify text_model_q4f16.onnx and tokenizer.json are valid and aligned with ingest"
+	);
+
+	let results = store
+		.search(
+			query_vec.to_vec(),
+			request.limit,
+			request.site_filter.as_deref(),
+		)
+		.await?;
+
+	Ok(SearchResponse {
+		results,
+		mode_label: mode_label.to_string(),
+		blend_label: blend_label(query_image_weight),
+		query_summary: header_query,
+	})
+}
+
+// ── CLI Adapter (terminal presentation only) ────────────────────────────────
+
+pub struct Args {
+	pub query: Option<String>,
+	pub image: Option<PathBuf>,
+	pub limit: u64,
+	pub qdrant_url: String,
+	pub models_dir: PathBuf,
+	pub weight: f32,
+	pub onnx_optimization: OnnxOptimizationIntensity,
+	pub site: Option<String>,
 }
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
@@ -92,77 +200,29 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	)?);
 	let store = store::Store::new(&args.qdrant_url).await?;
 
-	let query_image_weight = effective_image_weight(has_text_query, has_image_query, args.weight);
-
-	let mode_label = match (has_text_query, has_image_query) {
-		(true, true) => "text+image",
-		(true, false) => "text",
-		(false, true) => "image",
-		(false, false) => unreachable!("validated above"),
+	let request = SearchRequest {
+		text_query,
+		image_path: args.image,
+		limit: args.limit,
+		site_filter: args.site,
+		image_weight: args.weight,
 	};
 
-	let header_query = match (&text_query, &args.image) {
-		(Some(q), Some(img)) => format!("\"{q}\" + {}", img.display()),
-		(Some(q), None) => format!("\"{q}\""),
-		(None, Some(img)) => img.display().to_string(),
-		(None, None) => unreachable!("validated above"),
-	};
+	let response = execute_search(request, &embedder, &store).await?;
 
 	ui_step!(
 		"{}",
 		format!(
 			"{}  ·  mode={}{}",
-			header_query.bright_white().bold(),
-			mode_label,
-			blend_label(query_image_weight).unwrap_or_default()
+			response.query_summary.bright_white().bold(),
+			response.mode_label,
+			response.blend_label.as_deref().unwrap_or_default()
 		)
 		.as_str()
 	);
 
-	let query_vec = tokio::task::spawn_blocking({
-		let embedder = Arc::clone(&embedder);
-		let text_query = text_query.clone();
-		let image = args.image.clone();
-		let image_weight = query_image_weight;
-
-		move || -> anyhow::Result<[f32; embed::EMBED_DIM]> {
-			match (text_query, image) {
-				(Some(text), Some(image_path)) => {
-					let image = load_query_image(&image_path)?;
-					let preprocessed = embed::Embedder::preprocess(&image);
-					let image_vec = embedder.embed_image(&preprocessed)?;
-					let text_vec = embedder.embed_text(&text)?;
-					embed::blend_embeddings(&text_vec, &image_vec, image_weight)
-						.map_err(anyhow::Error::from)
-				}
-				(Some(text), None) => Ok(embedder.embed_text(&text)?),
-				(None, Some(image_path)) => {
-					let image = load_query_image(&image_path)?;
-					let preprocessed = embed::Embedder::preprocess(&image);
-					Ok(embedder.embed_image(&preprocessed)?)
-				}
-				(None, None) => bail!("provide a text query, --image, or both"),
-			}
-		}
-	})
-	.await??;
-
-	ensure!(
-		query_vec.iter().all(|value| value.is_finite()),
-		"generated query embedding contains non-finite values; verify text_model_q4f16.onnx and tokenizer.json match the indexed model set"
-	);
-	let query_norm_sq: f32 = query_vec.iter().map(|value| value * value).sum();
-	ensure!(
-		query_norm_sq > 1e-6,
-		"generated query embedding is near zero; verify text_model_q4f16.onnx and tokenizer.json are valid and aligned with ingest"
-	);
-
-	let results = store
-		.search(query_vec.to_vec(), args.limit, args.site.as_deref())
-		.await?;
-
 	println!();
-	if results.is_empty() {
+	if response.results.is_empty() {
 		ui_warn!("No results found");
 		if has_text_query {
 			ui_warn!(
@@ -170,7 +230,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 			);
 		}
 	} else {
-		let rows: Vec<(String, String, String, String, String)> = results
+		let rows: Vec<(String, String, String, String, String)> = response
+			.results
 			.iter()
 			.map(|r| {
 				let id = format!("#{}", r.post_id);
@@ -223,7 +284,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		println!();
 		ui_success!(
 			"{}",
-			format!("{} results", results.len().bold().bright_white()).as_str()
+			format!("{} results", response.results.len().bold().bright_white()).as_str()
 		);
 	}
 

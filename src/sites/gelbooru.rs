@@ -1,9 +1,11 @@
 use reqwest::Client;
 use serde::Deserialize;
-use std::time::Duration;
 use tokio::time::sleep;
 
 use super::common::first_url_or_empty;
+use super::http_client::{
+	INITIAL_BACKOFF, MAX_BACKOFF, MAX_RETRIES, build_http_client, download_bytes,
+};
 use super::{BooruClient, Post};
 use crate::error::RoobuError;
 
@@ -11,9 +13,6 @@ const BASE_URL: &str = "https://gelbooru.com/index.php";
 const SITE_NAME: &str = "gelbooru";
 const SITE_NAMESPACE: u64 = 4;
 const MAX_POSTS_PER_PAGE: u16 = 100;
-const MAX_RETRIES: u32 = 6;
-const INITIAL_BACKOFF: Duration = Duration::from_secs(5);
-const MAX_BACKOFF: Duration = Duration::from_secs(300);
 
 pub struct GelbooruClient {
 	http: Client,
@@ -23,14 +22,8 @@ pub struct GelbooruClient {
 
 impl GelbooruClient {
 	pub fn new(api_key: String, user_id: String) -> Result<Self, RoobuError> {
-		let cargo_version = env!("CARGO_PKG_VERSION");
-		let http = Client::builder()
-			.user_agent(format!("roobu/{} (semantic search indexer)", cargo_version))
-			.timeout(Duration::from_secs(30))
-			.build()?;
-
 		Ok(Self {
-			http,
+			http: build_http_client()?,
 			api_key,
 			user_id,
 		})
@@ -176,9 +169,7 @@ impl BooruClient for GelbooruClient {
 	}
 
 	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
-		let resp = self.http.get(url).send().await?.error_for_status()?;
-		let bytes = resp.bytes().await?;
-		Ok(bytes)
+		download_bytes(&self.http, url).await
 	}
 }
 

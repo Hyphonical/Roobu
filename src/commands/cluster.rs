@@ -8,7 +8,8 @@ use super::graph_hdbscan::{self, GraphHdbscanParams};
 use crate::config;
 use crate::embed;
 use crate::store;
-use crate::ui::{header, ui_step, ui_success, ui_warn};
+use crate::ui::header;
+use crate::{ui_step, ui_success, ui_warn};
 
 pub struct Args {
 	pub qdrant_url: String,

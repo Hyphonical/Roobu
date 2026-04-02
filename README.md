@@ -161,7 +161,7 @@ Options:
   --poll-interval <SECONDS>     Poll interval [default: 60]
   --site-fetch-timeout-secs <SECONDS>
                                  Per-site fetch timeout before skipping [default: 20]
-  --batch-size <N>              Batch size [default: 32]
+  --batch-size <N>              Batch size [default: 8]
   --download-concurrency <N>    Concurrent downloads [default: 8]
   --onnx-optimization <LEVEL>   ONNX optimization: safe|balanced|aggressive [default: safe]
   --rule34-api-key <KEY>        Rule34 API key (or RULE34_API_KEY), required for --site rule34

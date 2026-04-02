@@ -223,6 +223,35 @@ pub enum Commands {
 		#[arg(long, default_value_t = config::DEFAULT_STATS_BAR_WIDTH, help = "Maximum width of ASCII bars in terminal output")]
 		width: usize,
 	},
+
+	Serve {
+		#[arg(
+			long,
+			env = "QDRANT_URL",
+			default_value = config::DEFAULT_QDRANT_URL,
+			help = "Qdrant gRPC endpoint URL"
+		)]
+		qdrant_url: String,
+
+		#[arg(long, default_value = config::DEFAULT_MODELS_DIR, help = "Directory containing ONNX model files")]
+		models_dir: std::path::PathBuf,
+
+		#[arg(
+			long,
+			default_value = "0.0.0.0:3000",
+			help = "Address to bind the web server to"
+		)]
+		address: String,
+
+		#[arg(
+			long,
+			env = "ROOBU_ONNX_OPTIMIZATION",
+			value_enum,
+			default_value_t = embed::OnnxOptimizationIntensity::Safe,
+			help = "ONNX graph optimization level: safe, balanced, or aggressive"
+		)]
+		onnx_optimization: embed::OnnxOptimizationIntensity,
+	},
 }
 
 #[cfg(test)]

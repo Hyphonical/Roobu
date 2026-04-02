@@ -1,3 +1,9 @@
+//! Qdrant vector database client and schema management.
+//!
+//! Provides the [`Store`] struct for interacting with Qdrant, including
+//! collection creation, point upsertion, semantic search, vector fetching
+//! for clustering, and site distribution statistics.
+
 use std::collections::BTreeMap;
 
 use qdrant_client::Qdrant;
@@ -12,12 +18,19 @@ use qdrant_client::qdrant::{
 use crate::config;
 use crate::embed::EMBED_DIM;
 use crate::error::RoobuError;
-use crate::ui::{ui_step, ui_success};
+use crate::{ui_step, ui_success};
 
+// ── Point ID Encoding ───────────────────────────────────────────────────────
+
+/// Encode a (site_namespace, post_id) pair into a single u64 point ID.
+///
+/// The site namespace occupies the high-order digits, ensuring unique IDs
+/// across all sites. The post_id can be up to 999,999,999,999.
 pub fn encode_point_id(site_ns: u64, post_id: u64) -> u64 {
 	site_ns * config::POINT_ID_SITE_MULTIPLIER + post_id
 }
 
+/// Decode a u64 point ID back into (site_namespace, post_id).
 pub fn decode_point_id(point_id: u64) -> (u64, u64) {
 	(
 		point_id / config::POINT_ID_SITE_MULTIPLIER,
@@ -25,6 +38,9 @@ pub fn decode_point_id(point_id: u64) -> (u64, u64) {
 	)
 }
 
+// ── Data Structures ─────────────────────────────────────────────────────────
+
+/// Represents an embedded post ready for upsertion into Qdrant.
 pub struct PostEmbedding {
 	pub post_id: u64,
 	pub site: &'static str,
@@ -40,11 +56,41 @@ pub struct PostEmbedding {
 	pub image_vec: [f32; EMBED_DIM],
 }
 
+/// A single search result returned from Qdrant.
+pub struct SearchResult {
+	pub post_id: u64,
+	pub post_url: String,
+	pub thumbnail_url: String,
+	pub direct_image_url: String,
+	pub width: u32,
+	pub height: u32,
+	pub ingestion_date: i64,
+	pub score: f32,
+}
+
+/// A point fetched from Qdrant for clustering, containing its embedding vector.
+pub struct ClusterPoint {
+	pub post_id: u64,
+	pub post_url: String,
+	pub image_vec: Vec<f32>,
+}
+
+/// Distribution of indexed points across sites.
+pub struct SiteDistribution {
+	pub total_points: u64,
+	pub per_site: BTreeMap<String, u64>,
+	pub missing_site_payload: u64,
+}
+
+// ── Store ───────────────────────────────────────────────────────────────────
+
+/// Qdrant client wrapper with collection management and query helpers.
 pub struct Store {
 	client: Qdrant,
 }
 
 impl Store {
+	/// Create a new store and ensure the collection exists.
 	pub async fn new(url: &str) -> Result<Self, RoobuError> {
 		let client = Qdrant::from_url(url).build().map_err(RoobuError::from)?;
 		let store = Self { client };
@@ -52,6 +98,7 @@ impl Store {
 		Ok(store)
 	}
 
+	/// Create the Qdrant collection and field indexes if they don't exist.
 	async fn ensure_collection(&self) -> Result<(), RoobuError> {
 		if self
 			.client
@@ -86,43 +133,29 @@ impl Store {
 			)
 			.await?;
 
-		self.client
-			.create_field_index(
-				CreateFieldIndexCollectionBuilder::new(
-					config::QDRANT_COLLECTION,
-					"post_id",
-					FieldType::Integer,
+		// Create field indexes for efficient filtering.
+		for (field, field_type) in [
+			("post_id", FieldType::Integer),
+			("site", FieldType::Keyword),
+			("ingestion_date", FieldType::Integer),
+		] {
+			self.client
+				.create_field_index(
+					CreateFieldIndexCollectionBuilder::new(
+						config::QDRANT_COLLECTION,
+						field,
+						field_type,
+					)
+					.wait(true),
 				)
-				.wait(true),
-			)
-			.await?;
-
-		self.client
-			.create_field_index(
-				CreateFieldIndexCollectionBuilder::new(
-					config::QDRANT_COLLECTION,
-					"site",
-					FieldType::Keyword,
-				)
-				.wait(true),
-			)
-			.await?;
-
-		self.client
-			.create_field_index(
-				CreateFieldIndexCollectionBuilder::new(
-					config::QDRANT_COLLECTION,
-					"ingestion_date",
-					FieldType::Integer,
-				)
-				.wait(true),
-			)
-			.await?;
+				.await?;
+		}
 
 		ui_success!("Collection ready");
 		Ok(())
 	}
 
+	/// Upsert a batch of embedded posts into Qdrant.
 	pub async fn upsert(&self, embeddings: Vec<PostEmbedding>) -> Result<(), RoobuError> {
 		if embeddings.is_empty() {
 			return Ok(());
@@ -132,7 +165,6 @@ impl Store {
 			.into_iter()
 			.map(|e| {
 				let point_id = encode_point_id(e.site_namespace, e.post_id);
-
 				let vectors = NamedVectors::default().add_vector("image", e.image_vec.to_vec());
 
 				let payload: serde_json::Map<String, serde_json::Value> = [
@@ -170,6 +202,11 @@ impl Store {
 		Ok(())
 	}
 
+	/// Search for similar images using a query vector.
+	///
+	/// Fetches `limit * SEARCH_FETCH_LIMIT_MULTIPLIER` candidates to account
+	/// for post-filtering when a site filter is applied, then truncates to
+	/// the requested limit.
 	pub async fn search(
 		&self,
 		query_vec: Vec<f32>,
@@ -221,11 +258,14 @@ impl Store {
 				})
 			})
 			.collect();
+
+		// Fall back to thumbnail URL if direct image URL is missing.
 		for result in &mut results {
 			if result.direct_image_url.is_empty() {
 				result.direct_image_url = result.thumbnail_url.clone();
 			}
 		}
+
 		results.sort_by(|a, b| {
 			b.score
 				.partial_cmp(&a.score)
@@ -235,6 +275,10 @@ impl Store {
 		Ok(results)
 	}
 
+	/// Fetch image vectors from Qdrant for clustering analysis.
+	///
+	/// Scrolls through the collection, applying an optional site filter,
+	/// and returns up to `max_points` vectors with their metadata.
 	pub async fn fetch_image_vectors_for_clustering(
 		&self,
 		site_filter: Option<&str>,
@@ -270,7 +314,7 @@ impl Store {
 				request = request.filter(f.clone());
 			}
 
-			if let Some(current_offset) = offset.clone() {
+			if let Some(current_offset) = offset {
 				request = request.offset(current_offset);
 			}
 
@@ -312,8 +356,7 @@ impl Store {
 					.payload
 					.get("post_url")
 					.and_then(|value| value.as_str())
-					.map_or("", |value| value)
-					.to_string();
+					.map_or_else(String::new, |s| s.to_owned());
 
 				points.push(ClusterPoint {
 					post_id,
@@ -335,6 +378,7 @@ impl Store {
 		Ok(points)
 	}
 
+	/// Compute the distribution of indexed points across all sites.
 	pub async fn fetch_site_counts(&self, page_size: u32) -> Result<SiteDistribution, RoobuError> {
 		if page_size == 0 {
 			return Ok(SiteDistribution {
@@ -354,7 +398,7 @@ impl Store {
 				.limit(page_size)
 				.with_payload(true);
 
-			if let Some(current_offset) = offset.clone() {
+			if let Some(current_offset) = offset {
 				request = request.offset(current_offset);
 			}
 
@@ -392,29 +436,9 @@ impl Store {
 	}
 }
 
-pub struct SearchResult {
-	pub post_id: u64,
-	pub post_url: String,
-	pub thumbnail_url: String,
-	pub direct_image_url: String,
-	pub width: u32,
-	pub height: u32,
-	pub ingestion_date: i64,
-	pub score: f32,
-}
+// ── Payload Helpers ─────────────────────────────────────────────────────────
 
-pub struct ClusterPoint {
-	pub post_id: u64,
-	pub post_url: String,
-	pub image_vec: Vec<f32>,
-}
-
-pub struct SiteDistribution {
-	pub total_points: u64,
-	pub per_site: BTreeMap<String, u64>,
-	pub missing_site_payload: u64,
-}
-
+/// Extract a named dense vector from Qdrant's vector output.
 fn extract_named_dense_vector(
 	vectors: &qdrant_client::qdrant::VectorsOutput,
 	name: &str,
@@ -431,6 +455,7 @@ fn extract_named_dense_vector(
 	}
 }
 
+/// Extract a string value from a Qdrant payload field.
 fn payload_string(
 	payload: &std::collections::HashMap<String, qdrant_client::qdrant::Value>,
 	key: &str,
@@ -447,6 +472,7 @@ fn payload_string(
 		.unwrap_or_default()
 }
 
+/// Extract a u32 value from a Qdrant payload field.
 fn payload_u32(
 	payload: &std::collections::HashMap<String, qdrant_client::qdrant::Value>,
 	key: &str,
@@ -468,6 +494,7 @@ fn payload_u32(
 		.unwrap_or_default()
 }
 
+/// Extract an i64 value from a Qdrant payload field.
 fn payload_i64(
 	payload: &std::collections::HashMap<String, qdrant_client::qdrant::Value>,
 	key: &str,

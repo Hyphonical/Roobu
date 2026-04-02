@@ -14,7 +14,7 @@ Roobu defaults are defined in src/config.rs.
 ### Ingest Defaults
 
 - Poll interval: 60 seconds
-- Batch size: 32
+- Batch size: 8
 - Download concurrency: 8
 - Per-site fetch timeout: 20 seconds
 
@@ -128,6 +128,6 @@ If site endpoints are flaky:
 
 ### Cluster Quality Tuning
 
-- Raise --min-samples and/or --epsilon for tighter clusters.
+- Raise --min-cluster-size for tighter clusters.
 - Set --projection-dims for faster clustering on large corpora.
 - Increase --max-points only when memory budget allows.

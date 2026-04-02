@@ -1,3 +1,9 @@
+//! Booru site adapters for fetching and parsing image posts.
+//!
+//! Each site implements the [`BooruClient`] trait, providing a uniform interface
+//! for fetching recent posts and downloading thumbnails. The [`SiteClient`] enum
+//! dispatches calls to the appropriate adapter at runtime.
+
 pub mod aibooru;
 pub mod civitai;
 mod common;
@@ -5,6 +11,7 @@ pub mod danbooru;
 pub mod e621;
 pub mod e6ai;
 pub mod gelbooru;
+mod http_client;
 pub mod kemono;
 pub mod konachan;
 pub mod rule34;
@@ -17,20 +24,34 @@ use anyhow::Context;
 use crate::config;
 use crate::error::RoobuError;
 
+// ── Data Types ──────────────────────────────────────────────────────────────
+
+/// A normalized image post from any supported site.
 #[derive(Debug, Clone)]
 pub struct Post {
+	/// Unique post ID within the site.
 	pub id: u64,
+	/// Space-separated tags describing the image content.
 	pub tags: String,
+	/// URL to a small thumbnail for quick preview/download.
 	pub thumbnail_url: String,
+	/// Optional URL to the full-resolution image.
 	pub direct_image_url: Option<String>,
+	/// Image width in pixels.
 	pub width: u32,
+	/// Image height in pixels.
 	pub height: u32,
+	/// Content rating (e.g., "s", "q", "e").
 	pub rating: String,
+	/// Human-readable site name (e.g., "rule34", "e621").
 	pub site: &'static str,
+	/// Numeric namespace used for encoding point IDs in Qdrant.
 	pub site_namespace: u64,
+	/// Optional canonical URL to the post page on the site.
 	pub canonical_post_url: Option<String>,
 }
 
+/// Supported booru sites, used for CLI argument parsing and client dispatch.
 #[derive(clap::ValueEnum, Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SiteKind {
 	Rule34,
@@ -48,6 +69,7 @@ pub enum SiteKind {
 	Yandere,
 }
 
+/// Credentials required for sites that need authentication.
 pub struct SiteCredentials {
 	pub rule34_api_key: Option<String>,
 	pub rule34_user_id: Option<String>,
@@ -59,6 +81,7 @@ pub struct SiteCredentials {
 	pub kemono_base_url: Option<String>,
 }
 
+/// Enum dispatching to the appropriate site adapter.
 pub enum SiteClient {
 	Rule34(rule34::Rule34Client),
 	E621(e621::E621Client),
@@ -74,6 +97,13 @@ pub enum SiteClient {
 	Yandere(yandere::YandereClient),
 }
 
+// ── Client Factory ──────────────────────────────────────────────────────────
+
+/// Build a site client for the given site kind and credentials.
+///
+/// # Errors
+/// Returns an error if required credentials are missing for the site,
+/// or if the HTTP client fails to initialize.
 pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Result<SiteClient> {
 	match site {
 		SiteKind::Rule34 => {
@@ -117,7 +147,10 @@ pub fn build_client(site: SiteKind, credentials: SiteCredentials) -> anyhow::Res
 	}
 }
 
+// ── Post Helpers ────────────────────────────────────────────────────────────
+
 impl Post {
+	/// Construct the canonical URL to the post page on its source site.
 	pub fn post_url(&self) -> String {
 		if let Some(url) = &self.canonical_post_url {
 			return url.clone();
@@ -152,16 +185,21 @@ impl Post {
 		}
 	}
 
+	/// Check if the post has a non-empty thumbnail URL.
 	pub fn has_thumbnail(&self) -> bool {
 		!self.thumbnail_url.is_empty()
 	}
 
+	/// Return the direct image URL if available, falling back to the thumbnail URL.
 	pub fn preferred_image_url(&self) -> String {
 		self.direct_image_url
 			.clone()
 			.unwrap_or_else(|| self.thumbnail_url.clone())
 	}
 
+	/// Compute the aspect ratio (longer edge / shorter edge) from dimensions.
+	///
+	/// Returns `None` if both dimensions are zero.
 	pub fn aspect_ratio_from_dims(w: u32, h: u32) -> Option<f32> {
 		if w == 0 && h == 0 {
 			return None;
@@ -170,14 +208,19 @@ impl Post {
 		Some(w.max(h) / w.min(h))
 	}
 
+	/// Compute the aspect ratio from the post's dimensions.
 	pub fn aspect_ratio(&self) -> Option<f32> {
 		Self::aspect_ratio_from_dims(self.width, self.height)
 	}
 
+	/// Check if the aspect ratio is within acceptable bounds.
 	pub fn is_aspect_ratio_ok(ratio: f32) -> bool {
 		ratio <= config::MAX_IMAGE_ASPECT_RATIO
 	}
 
+	/// Run preflight checks to determine if this post is worth processing.
+	///
+	/// Currently checks for a valid thumbnail URL and acceptable aspect ratio.
 	pub fn passes_preflight(&self) -> bool {
 		if !self.has_thumbnail() {
 			return false;
@@ -192,171 +235,114 @@ impl Post {
 	}
 }
 
+// ── BooruClient Trait ───────────────────────────────────────────────────────
+
+/// Trait for site adapters, providing a uniform interface for fetching posts.
 pub trait BooruClient: Send + Sync {
+	/// Return the human-readable site name.
 	fn site_name(&self) -> &'static str;
 
+	/// Fetch recent posts newer than the given post ID.
+	///
+	/// Returns posts sorted by ID ascending (oldest first), which allows the
+	/// ingest loop to process them in order and update the checkpoint correctly.
 	fn fetch_recent(
 		&self,
 		last_id: u64,
-	) -> impl Future<Output = Result<Vec<Post>, RoobuError>> + Send;
+	) -> impl std::future::Future<Output = Result<Vec<Post>, RoobuError>> + Send;
+
+	/// Download thumbnail bytes from the given URL.
 	fn download_thumbnail(
 		&self,
 		url: &str,
-	) -> impl Future<Output = Result<bytes::Bytes, RoobuError>> + Send;
+	) -> impl std::future::Future<Output = Result<bytes::Bytes, RoobuError>> + Send;
 }
 
+/// Validate downloaded image bytes and decode into a [`DynamicImage`].
+///
+/// Checks minimum file size and attempts to decode the image. Returns `None`
+/// if the data is too small or cannot be decoded as a supported image format.
+pub fn validate_downloaded_image(post_id: u64, data: &[u8]) -> Option<image::DynamicImage> {
+	if data.len() < config::MIN_DOWNLOADED_IMAGE_BYTES {
+		tracing::debug!(post_id, size = data.len(), "skipped: too small");
+		return None;
+	}
+
+	match image::load_from_memory(data) {
+		Ok(img) => {
+			let (w, h) = (img.width(), img.height());
+			if w < config::MIN_IMAGE_EDGE_PX || h < config::MIN_IMAGE_EDGE_PX {
+				tracing::debug!(post_id, w, h, "skipped: below minimum dimensions");
+				return None;
+			}
+			Some(img)
+		}
+		Err(e) => {
+			tracing::debug!(post_id, error = %e, "skipped: failed to decode image");
+			None
+		}
+	}
+}
+
+/// Delegate [`BooruClient`] calls through the [`SiteClient`] enum.
 impl BooruClient for SiteClient {
 	fn site_name(&self) -> &'static str {
 		match self {
-			SiteClient::Rule34(client) => client.site_name(),
-			SiteClient::E621(client) => client.site_name(),
-			SiteClient::Safebooru(client) => client.site_name(),
-			SiteClient::Xbooru(client) => client.site_name(),
-			SiteClient::Kemono(client) => client.site_name(),
-			SiteClient::Aibooru(client) => client.site_name(),
-			SiteClient::Danbooru(client) => client.site_name(),
-			SiteClient::Civitai(client) => client.site_name(),
-			SiteClient::E6Ai(client) => client.site_name(),
-			SiteClient::Gelbooru(client) => client.site_name(),
-			SiteClient::Konachan(client) => client.site_name(),
-			SiteClient::Yandere(client) => client.site_name(),
+			Self::Rule34(c) => c.site_name(),
+			Self::E621(c) => c.site_name(),
+			Self::Safebooru(c) => c.site_name(),
+			Self::Xbooru(c) => c.site_name(),
+			Self::Kemono(c) => c.site_name(),
+			Self::Aibooru(c) => c.site_name(),
+			Self::Danbooru(c) => c.site_name(),
+			Self::Civitai(c) => c.site_name(),
+			Self::E6Ai(c) => c.site_name(),
+			Self::Gelbooru(c) => c.site_name(),
+			Self::Konachan(c) => c.site_name(),
+			Self::Yandere(c) => c.site_name(),
 		}
 	}
 
 	async fn fetch_recent(&self, last_id: u64) -> Result<Vec<Post>, RoobuError> {
 		match self {
-			SiteClient::Rule34(client) => client.fetch_recent(last_id).await,
-			SiteClient::E621(client) => client.fetch_recent(last_id).await,
-			SiteClient::Safebooru(client) => client.fetch_recent(last_id).await,
-			SiteClient::Xbooru(client) => client.fetch_recent(last_id).await,
-			SiteClient::Kemono(client) => client.fetch_recent(last_id).await,
-			SiteClient::Aibooru(client) => client.fetch_recent(last_id).await,
-			SiteClient::Danbooru(client) => client.fetch_recent(last_id).await,
-			SiteClient::Civitai(client) => client.fetch_recent(last_id).await,
-			SiteClient::E6Ai(client) => client.fetch_recent(last_id).await,
-			SiteClient::Gelbooru(client) => client.fetch_recent(last_id).await,
-			SiteClient::Konachan(client) => client.fetch_recent(last_id).await,
-			SiteClient::Yandere(client) => client.fetch_recent(last_id).await,
+			Self::Rule34(c) => c.fetch_recent(last_id).await,
+			Self::E621(c) => c.fetch_recent(last_id).await,
+			Self::Safebooru(c) => c.fetch_recent(last_id).await,
+			Self::Xbooru(c) => c.fetch_recent(last_id).await,
+			Self::Kemono(c) => c.fetch_recent(last_id).await,
+			Self::Aibooru(c) => c.fetch_recent(last_id).await,
+			Self::Danbooru(c) => c.fetch_recent(last_id).await,
+			Self::Civitai(c) => c.fetch_recent(last_id).await,
+			Self::E6Ai(c) => c.fetch_recent(last_id).await,
+			Self::Gelbooru(c) => c.fetch_recent(last_id).await,
+			Self::Konachan(c) => c.fetch_recent(last_id).await,
+			Self::Yandere(c) => c.fetch_recent(last_id).await,
 		}
 	}
 
 	async fn download_thumbnail(&self, url: &str) -> Result<bytes::Bytes, RoobuError> {
 		match self {
-			SiteClient::Rule34(client) => client.download_thumbnail(url).await,
-			SiteClient::E621(client) => client.download_thumbnail(url).await,
-			SiteClient::Safebooru(client) => client.download_thumbnail(url).await,
-			SiteClient::Xbooru(client) => client.download_thumbnail(url).await,
-			SiteClient::Kemono(client) => client.download_thumbnail(url).await,
-			SiteClient::Aibooru(client) => client.download_thumbnail(url).await,
-			SiteClient::Danbooru(client) => client.download_thumbnail(url).await,
-			SiteClient::Civitai(client) => client.download_thumbnail(url).await,
-			SiteClient::E6Ai(client) => client.download_thumbnail(url).await,
-			SiteClient::Gelbooru(client) => client.download_thumbnail(url).await,
-			SiteClient::Konachan(client) => client.download_thumbnail(url).await,
-			SiteClient::Yandere(client) => client.download_thumbnail(url).await,
+			Self::Rule34(c) => c.download_thumbnail(url).await,
+			Self::E621(c) => c.download_thumbnail(url).await,
+			Self::Safebooru(c) => c.download_thumbnail(url).await,
+			Self::Xbooru(c) => c.download_thumbnail(url).await,
+			Self::Kemono(c) => c.download_thumbnail(url).await,
+			Self::Aibooru(c) => c.download_thumbnail(url).await,
+			Self::Danbooru(c) => c.download_thumbnail(url).await,
+			Self::Civitai(c) => c.download_thumbnail(url).await,
+			Self::E6Ai(c) => c.download_thumbnail(url).await,
+			Self::Gelbooru(c) => c.download_thumbnail(url).await,
+			Self::Konachan(c) => c.download_thumbnail(url).await,
+			Self::Yandere(c) => c.download_thumbnail(url).await,
 		}
 	}
 }
 
-use std::future::Future;
-
-/// Check if bytes represent a valid image format by examining magic bytes
-fn is_valid_image_format(bytes: &[u8]) -> bool {
-	if bytes.len() < 4 {
-		return false;
-	}
-
-	// JPEG: FF D8 FF
-	if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
-		return true;
-	}
-
-	// PNG: 89 50 4E 47
-	if bytes.len() >= 4
-		&& bytes[0] == 0x89
-		&& bytes[1] == 0x50
-		&& bytes[2] == 0x4E
-		&& bytes[3] == 0x47
-	{
-		return true;
-	}
-
-	// GIF: 47 49 46 38
-	if bytes.len() >= 4
-		&& bytes[0] == 0x47
-		&& bytes[1] == 0x49
-		&& bytes[2] == 0x46
-		&& bytes[3] == 0x38
-	{
-		return true;
-	}
-
-	// WebP: 52 49 46 46 (RIFF) followed by 57 45 42 50 (WEBP)
-	if bytes.len() >= 12
-		&& bytes[0] == 0x52
-		&& bytes[1] == 0x49
-		&& bytes[2] == 0x46
-		&& bytes[3] == 0x46
-		&& bytes[8] == 0x57
-		&& bytes[9] == 0x45
-		&& bytes[10] == 0x42
-		&& bytes[11] == 0x50
-	{
-		return true;
-	}
-
-	// BMP: 42 4D
-	if bytes.len() >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D {
-		return true;
-	}
-
-	false
-}
-
-pub fn validate_downloaded_image(post_id: u64, bytes: &[u8]) -> Option<image::DynamicImage> {
-	if bytes.len() < config::MIN_DOWNLOADED_IMAGE_BYTES {
-		tracing::warn!(post_id, len = bytes.len(), "skipped: tiny image");
-		return None;
-	}
-
-	// Check magic bytes before attempting to decode
-	if !is_valid_image_format(bytes) {
-		tracing::warn!(
-			post_id,
-			len = bytes.len(),
-			first_bytes = format!("{:02X?}", &bytes[..bytes.len().min(8)]),
-			"skipped: invalid image format (bad magic bytes)"
-		);
-		return None;
-	}
-
-	let img = match image::load_from_memory(bytes) {
-		Ok(img) => img,
-		Err(e) => {
-			tracing::warn!(post_id, error = %e, "skipped: decode failed");
-			return None;
-		}
-	};
-
-	let (w, h) = (img.width(), img.height());
-	if w < config::MIN_IMAGE_EDGE_PX || h < config::MIN_IMAGE_EDGE_PX {
-		tracing::warn!(post_id, w, h, "skipped: too small");
-		return None;
-	}
-
-	if let Some(ratio) = Post::aspect_ratio_from_dims(w, h)
-		&& !Post::is_aspect_ratio_ok(ratio)
-	{
-		tracing::debug!(post_id, ratio, "skipped: decoded aspect ratio");
-		return None;
-	}
-
-	Some(img)
-}
+// ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-	use super::{Post, is_valid_image_format};
+	use super::Post;
 
 	fn make_post(id: u64, site: &'static str, site_namespace: u64) -> Post {
 		Post {
@@ -412,63 +398,5 @@ mod tests {
 		);
 		assert_eq!(konachan.post_url(), "https://konachan.com/post/show/111");
 		assert_eq!(yandere.post_url(), "https://yande.re/post/show/222");
-	}
-
-	#[test]
-	fn test_is_valid_image_format_jpeg() {
-		// JPEG magic bytes: FF D8 FF
-		let jpeg_bytes = [0xFF, 0xD8, 0xFF, 0xE0];
-		assert!(is_valid_image_format(&jpeg_bytes));
-	}
-
-	#[test]
-	fn test_is_valid_image_format_png() {
-		// PNG magic bytes: 89 50 4E 47
-		let png_bytes = [0x89, 0x50, 0x4E, 0x47];
-		assert!(is_valid_image_format(&png_bytes));
-	}
-
-	#[test]
-	fn test_is_valid_image_format_gif() {
-		// GIF magic bytes: 47 49 46 38
-		let gif_bytes = [0x47, 0x49, 0x46, 0x38];
-		assert!(is_valid_image_format(&gif_bytes));
-	}
-
-	#[test]
-	fn test_is_valid_image_format_webp() {
-		// WebP magic bytes: RIFF (52 49 46 46) followed by WEBP (57 45 42 50)
-		let webp_bytes = [
-			0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
-		];
-		assert!(is_valid_image_format(&webp_bytes));
-	}
-
-	#[test]
-	fn test_is_valid_image_format_bmp() {
-		// BMP magic bytes: 42 4D
-		let bmp_bytes = [0x42, 0x4D, 0x00, 0x00];
-		assert!(is_valid_image_format(&bmp_bytes));
-	}
-
-	#[test]
-	fn test_is_valid_image_format_invalid() {
-		// Invalid bytes that don't match any known image format
-		let invalid_bytes = [0x00, 0x01, 0x02, 0x03];
-		assert!(!is_valid_image_format(&invalid_bytes));
-	}
-
-	#[test]
-	fn test_is_valid_image_format_too_short() {
-		// Too short to be a valid image
-		let short_bytes = [0xFF];
-		assert!(!is_valid_image_format(&short_bytes));
-	}
-
-	#[test]
-	fn test_is_valid_image_format_empty() {
-		// Empty bytes
-		let empty_bytes: [u8; 0] = [];
-		assert!(!is_valid_image_format(&empty_bytes));
 	}
 }

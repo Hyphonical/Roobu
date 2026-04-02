@@ -1,32 +1,33 @@
+//! Stats command — display site distribution statistics.
+
 use anyhow::ensure;
 use owo_colors::OwoColorize;
 
 use crate::store;
-use crate::ui::{header, ui_step, ui_success, ui_warn};
+use crate::ui::header;
+use crate::{ui_step, ui_success, ui_warn};
 
+/// CLI arguments for the stats command.
 pub struct Args {
 	pub qdrant_url: String,
 	pub page_size: u32,
 	pub width: usize,
 }
 
+/// Display the distribution of indexed posts across all sites.
 pub async fn run(args: Args) -> anyhow::Result<()> {
 	header("roobu · stats");
 
 	ensure!(args.page_size > 0, "--page-size must be greater than 0");
 	ensure!(args.width > 0, "--width must be greater than 0");
 
-	ui_step!("{}", "Connecting to Qdrant…");
+	ui_step!("Connecting to Qdrant…");
 	let store = store::Store::new(&args.qdrant_url).await?;
 	ui_success!("Qdrant ready");
 
 	ui_step!(
-		"{}",
-		format!(
-			"Scanning collection for site distribution (page size {})…",
-			args.page_size
-		)
-		.as_str()
+		"Scanning collection for site distribution (page size {})…",
+		args.page_size
 	);
 
 	let distribution = store.fetch_site_counts(args.page_size).await?;
@@ -40,18 +41,14 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 
 	let site_count = rows.len();
 	ui_success!(
-		"{}",
-		format!(
-			"{} indexed posts across {} site{}",
-			distribution.total_points.bold().bright_white(),
-			site_count.bold().bright_white(),
-			if site_count == 1 { "" } else { "s" }
-		)
-		.as_str()
+		"{} indexed posts across {} site{}",
+		distribution.total_points.bold().bright_white(),
+		site_count.bold().bright_white(),
+		if site_count == 1 { "" } else { "s" }
 	);
 
 	println!();
-	ui_step!("{}", "Per-site share");
+	ui_step!("Per-site share");
 
 	for (site, count) in &rows {
 		let percent = (*count as f64 / distribution.total_points as f64) * 100.0;
@@ -71,12 +68,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	if distribution.missing_site_payload > 0 {
 		println!();
 		ui_warn!(
-			"{}",
-			format!(
-				"{} points are missing the 'site' payload field",
-				distribution.missing_site_payload
-			)
-			.as_str()
+			"{} points are missing the 'site' payload field",
+			distribution.missing_site_payload
 		);
 	}
 
@@ -84,12 +77,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 		let leader_pct = (*leader_count as f64 / distribution.total_points as f64) * 100.0;
 		println!();
 		ui_success!(
-			"{}",
-			format!(
-				"Leader: {} ({leader_pct:.2}%)",
-				leader_site.bright_white().bold()
-			)
-			.as_str()
+			"Leader: {} ({leader_pct:.2}%)",
+			leader_site.bright_white().bold()
 		);
 	}
 
@@ -98,12 +87,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	{
 		let tail_pct = (*tail_count as f64 / distribution.total_points as f64) * 100.0;
 		ui_step!(
-			"{}",
-			format!(
-				"Trailing site: {} ({tail_pct:.2}%)",
-				tail_site.bright_white()
-			)
-			.as_str()
+			"Trailing site: {} ({tail_pct:.2}%)",
+			tail_site.bright_white()
 		);
 	}
 

@@ -76,18 +76,15 @@ Fix:
 
 Try:
 
-- lower --min-samples
-- lower --epsilon for less strict neighborhoods
+- lower --min-cluster-size
 - increase --max-points for denser sample coverage
 
 ### Clusters are too broad or mixed
 
 Try:
 
-- increase --min-samples
-- increase --epsilon
-- set --max-cluster-size
-- project to moderate dimensions if high-dimensional noise dominates
+- increase --min-cluster-size
+- set --projection-dims to moderate dimensions if high-dimensional noise dominates
 
 ### Clustering is slow
 
@@ -95,7 +92,6 @@ Try:
 
 - reduce --max-points
 - set --projection-dims (for example 256)
-- lower --projection-nnz
 
 ## Checkpoint Issues
 

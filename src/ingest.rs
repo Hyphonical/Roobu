@@ -13,7 +13,8 @@ use crate::embed::Embedder;
 use crate::error::RoobuError;
 use crate::sites::{BooruClient, Post, SiteClient, validate_downloaded_image};
 use crate::store::{PostEmbedding, Store};
-use crate::ui::*;
+use crate::ui::header;
+use crate::{ui_detail, ui_step, ui_success, ui_warn};
 
 pub struct IngestConfig {
 	pub poll_interval_secs: u64,
@@ -104,7 +105,14 @@ async fn download_batch(
 		.map(|post| {
 			let sem = semaphore.clone();
 			async move {
-				let _permit = sem.acquire().await.unwrap();
+				let permit = match sem.acquire().await {
+					Ok(p) => p,
+					Err(e) => {
+						tracing::warn!(post_id = post.id, error = %e, "semaphore closed; skipping download");
+						return None;
+					}
+				};
+				let _permit = permit;
 				let url = post.thumbnail_url.clone();
 				match client.download_thumbnail(&url).await {
 					Ok(data) => validate_downloaded_image(post.id, &data).map(|img| (post, img)),
@@ -478,7 +486,7 @@ pub async fn run_multi(
 
 			let cycle_start = Instant::now();
 			match run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await {
-				Ok(stats) => print_cycle_stats(&stats),
+				Ok(cycle_stats) => print_cycle_stats(&cycle_stats),
 				Err(error) => {
 					let elapsed = cycle_start.elapsed();
 					let error_chain = format!("{error:#}");

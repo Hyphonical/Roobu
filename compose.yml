@@ -1,12 +1,15 @@
 name: Roobu
 
 services:
+  # ── Qdrant Vector Database ────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     container_name: Roobu-Qdrant
     restart: unless-stopped
     ports:
+      # REST API
       - "6333:6333"
+      # gRPC API
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
@@ -17,24 +20,41 @@ services:
       retries: 30
       start_period: 30s
 
+  # ── Roobu Semantic Search Indexer ─────────────────────────────────────────
   roobu:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     container_name: Roobu
     depends_on:
       qdrant:
         condition: service_healthy
     environment:
+      # Qdrant connection
       QDRANT_URL: http://qdrant:6334
+      # Rule34 credentials (required for rule34 site)
       RULE34_API_KEY: ${RULE34_API_KEY}
       RULE34_USER_ID: ${RULE34_USER_ID}
+      # Gelbooru credentials (required for gelbooru site)
       GELBOORU_API_KEY: ${GELBOORU_API_KEY}
       GELBOORU_USER_ID: ${GELBOORU_USER_ID}
+      # e621 credentials (optional, improves rate limits)
+      E621_LOGIN: ${E621_LOGIN:-}
+      E621_API_KEY: ${E621_API_KEY:-}
+      # Kemono session (optional, improves feed freshness)
+      KEMONO_SESSION: ${KEMONO_SESSION:-}
+      KEMONO_BASE_URL: ${KEMONO_BASE_URL:-}
+      # ONNX optimization level: safe, balanced, or aggressive
       ROOBU_ONNX_OPTIMIZATION: ${ROOBU_ONNX_OPTIMIZATION:-safe}
-      RUST_LOG: roobu=info
+      # Logging verbosity
+      RUST_LOG: ${RUST_LOG:-roobu=info}
     volumes:
+      # ONNX models (read-only)
       - ./models:/app/models:ro
+      # Checkpoint and data persistence
       - roobu_data:/app/data
+    # Default command: ingest with checkpoint persistence
     command:
       - ingest
       - --checkpoint

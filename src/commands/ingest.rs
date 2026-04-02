@@ -8,9 +8,13 @@ use crate::embed::{self, OnnxOptimizationIntensity};
 use crate::ingest;
 use crate::sites;
 use crate::store;
-use crate::ui::{header, ui_step, ui_success};
+use crate::ui::header;
+use crate::{ui_step, ui_success};
 
-pub struct Args {
+// ── Application Service (pure logic, reusable by CLI and Web) ────────────────
+
+/// Input parameters for an ingest operation.
+pub struct IngestRequest {
 	pub site: Option<sites::SiteKind>,
 	pub qdrant_url: String,
 	pub models_dir: PathBuf,
@@ -30,7 +34,16 @@ pub struct Args {
 	pub onnx_optimization: OnnxOptimizationIntensity,
 }
 
-fn site_credentials(args: &Args) -> sites::SiteCredentials {
+/// Result of preparing an ingest operation, containing all initialized components.
+pub struct IngestSetup {
+	pub embedder: Arc<embed::Embedder>,
+	pub store: store::Store,
+	pub ingest_config: ingest::IngestConfig,
+	pub site: Option<sites::SiteKind>,
+	pub clients: Option<Vec<sites::SiteClient>>,
+}
+
+fn site_credentials(args: &IngestRequest) -> sites::SiteCredentials {
 	sites::SiteCredentials {
 		rule34_api_key: args.rule34_api_key.clone(),
 		rule34_user_id: args.rule34_user_id.clone(),
@@ -43,17 +56,23 @@ fn site_credentials(args: &Args) -> sites::SiteCredentials {
 	}
 }
 
-fn build_all_sites_clients(args: &Args) -> anyhow::Result<Vec<sites::SiteClient>> {
+/// Build all available site clients for all-sites mode.
+/// Returns a tuple of `(clients, skipped_messages)` where `skipped_messages` contains
+/// informational messages about sites that were skipped due to missing credentials.
+pub fn build_all_sites_clients(
+	args: &IngestRequest,
+) -> anyhow::Result<(Vec<sites::SiteClient>, Vec<String>)> {
 	let mut clients = Vec::new();
+	let mut skipped_messages = Vec::new();
 
 	match (&args.rule34_api_key, &args.rule34_user_id) {
 		(Some(_), Some(_)) => clients.push(sites::build_client(
 			sites::SiteKind::Rule34,
 			site_credentials(args),
 		)?),
-		(None, None) => ui_step!(
-			"{}",
+		(None, None) => skipped_messages.push(
 			"RULE34_API_KEY and RULE34_USER_ID not set; skipping rule34 in all-sites mode"
+				.to_string(),
 		),
 		_ => {
 			anyhow::bail!(
@@ -108,9 +127,9 @@ fn build_all_sites_clients(args: &Args) -> anyhow::Result<Vec<sites::SiteClient>
 			sites::SiteKind::Gelbooru,
 			site_credentials(args),
 		)?),
-		(None, None) => ui_step!(
-			"{}",
+		(None, None) => skipped_messages.push(
 			"GELBOORU_API_KEY and GELBOORU_USER_ID not set; skipping gelbooru in all-sites mode"
+				.to_string(),
 		),
 		_ => {
 			anyhow::bail!(
@@ -123,59 +142,143 @@ fn build_all_sites_clients(args: &Args) -> anyhow::Result<Vec<sites::SiteClient>
 		anyhow::bail!("no ingest clients available")
 	}
 
-	Ok(clients)
+	Ok((clients, skipped_messages))
+}
+
+/// Set up ingest components (embedder, store, config, clients).
+/// This is the pure application logic that can be reused by both CLI and web handlers.
+pub async fn setup_ingest(request: &IngestRequest) -> anyhow::Result<IngestSetup> {
+	ensure!(
+		request.site_fetch_timeout_secs > 0,
+		"--site-fetch-timeout-secs must be greater than 0"
+	);
+	ensure!(
+		request.batch_size > 0,
+		"--batch-size must be greater than 0"
+	);
+	ensure!(
+		request.download_concurrency > 0,
+		"--download-concurrency must be greater than 0"
+	);
+
+	let embedder = Arc::new(embed::Embedder::new(
+		&request.models_dir,
+		embed::ModelLoad::VisionOnly,
+		request.onnx_optimization,
+	)?);
+
+	let store = store::Store::new(&request.qdrant_url).await?;
+
+	let ingest_config = ingest::IngestConfig {
+		poll_interval_secs: request.poll_interval,
+		batch_size: request.batch_size,
+		download_concurrency: request.download_concurrency,
+		site_fetch_timeout_secs: request.site_fetch_timeout_secs,
+	};
+
+	let (clients, _skipped) = if request.site.is_none() {
+		let (clients, skipped) = build_all_sites_clients(request)?;
+		(Some(clients), skipped)
+	} else {
+		(None, Vec::new())
+	};
+
+	Ok(IngestSetup {
+		embedder,
+		store,
+		ingest_config,
+		site: request.site,
+		clients,
+	})
+}
+
+// ── CLI Adapter (terminal presentation only) ────────────────────────────────
+
+pub struct Args {
+	pub site: Option<sites::SiteKind>,
+	pub qdrant_url: String,
+	pub models_dir: PathBuf,
+	pub checkpoint: PathBuf,
+	pub poll_interval: u64,
+	pub batch_size: usize,
+	pub download_concurrency: usize,
+	pub site_fetch_timeout_secs: u64,
+	pub rule34_api_key: Option<String>,
+	pub rule34_user_id: Option<String>,
+	pub e621_login: Option<String>,
+	pub e621_api_key: Option<String>,
+	pub gelbooru_api_key: Option<String>,
+	pub gelbooru_user_id: Option<String>,
+	pub kemono_session: Option<String>,
+	pub kemono_base_url: Option<String>,
+	pub onnx_optimization: OnnxOptimizationIntensity,
 }
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
 	header("roobu · init");
 
-	ui_step!("{}", "Loading embedder…");
-	let embedder = Arc::new(embed::Embedder::new(
-		&args.models_dir,
-		embed::ModelLoad::VisionOnly,
-		args.onnx_optimization,
-	)?);
-	ui_success!("Embedder ready");
-
-	ui_step!("{}", "Connecting to Qdrant…");
-	let store = store::Store::new(&args.qdrant_url).await?;
-	ui_success!("Qdrant ready");
-
-	ensure!(
-		args.site_fetch_timeout_secs > 0,
-		"--site-fetch-timeout-secs must be greater than 0"
-	);
-	ensure!(args.batch_size > 0, "--batch-size must be greater than 0");
-	ensure!(
-		args.download_concurrency > 0,
-		"--download-concurrency must be greater than 0"
-	);
-
-	let ingest_config = ingest::IngestConfig {
-		poll_interval_secs: args.poll_interval,
+	let request = IngestRequest {
+		site: args.site,
+		qdrant_url: args.qdrant_url,
+		models_dir: args.models_dir,
+		checkpoint: args.checkpoint,
+		poll_interval: args.poll_interval,
 		batch_size: args.batch_size,
 		download_concurrency: args.download_concurrency,
 		site_fetch_timeout_secs: args.site_fetch_timeout_secs,
+		rule34_api_key: args.rule34_api_key,
+		rule34_user_id: args.rule34_user_id,
+		e621_login: args.e621_login,
+		e621_api_key: args.e621_api_key,
+		gelbooru_api_key: args.gelbooru_api_key,
+		gelbooru_user_id: args.gelbooru_user_id,
+		kemono_session: args.kemono_session,
+		kemono_base_url: args.kemono_base_url,
+		onnx_optimization: args.onnx_optimization,
 	};
 
-	match args.site {
-		Some(site) => {
-			let client = sites::build_client(site, site_credentials(&args))
-				.with_context(|| format!("failed to build {site:?} client"))?;
-			ingest::run(client, &store, embedder, &args.checkpoint, &ingest_config).await
-		}
-		None => {
-			let clients = build_all_sites_clients(&args)?;
-			ui_success!(
-				"{}",
-				format!(
-					"All-sites mode enabled · {} clients (sequential)",
-					clients.len()
-				)
-				.as_str()
-			);
-			ingest::run_multi(clients, &store, embedder, &args.checkpoint, &ingest_config).await
-		}
+	ui_step!("{}", "Loading embedder…");
+	ui_step!("{}", "Connecting to Qdrant…");
+
+	let setup = setup_ingest(&request).await?;
+
+	ui_success!("Embedder ready");
+	ui_success!("Qdrant ready");
+
+	if let Some(ref clients) = setup.clients {
+		ui_success!(
+			"{}",
+			format!(
+				"All-sites mode enabled · {} clients (sequential)",
+				clients.len()
+			)
+			.as_str()
+		);
+	}
+
+	if let Some(site) = setup.site {
+		let client = sites::build_client(site, site_credentials(&request))
+			.with_context(|| format!("failed to build {site:?} client"))?;
+		ingest::run(
+			client,
+			&setup.store,
+			setup.embedder,
+			&request.checkpoint,
+			&setup.ingest_config,
+		)
+		.await
+	} else {
+		let clients = setup
+			.clients
+			.expect("clients should be set for all-sites mode");
+		ingest::run_multi(
+			clients,
+			&setup.store,
+			setup.embedder,
+			&request.checkpoint,
+			&setup.ingest_config,
+		)
+		.await
 	}
 }
 
@@ -187,10 +290,10 @@ mod tests {
 	use crate::embed::OnnxOptimizationIntensity;
 	use crate::sites::BooruClient;
 
-	use super::{Args, build_all_sites_clients};
+	use super::{IngestRequest, build_all_sites_clients};
 
-	fn default_args() -> Args {
-		Args {
+	fn default_request() -> IngestRequest {
+		IngestRequest {
 			site: None,
 			qdrant_url: "http://localhost:6334".to_string(),
 			models_dir: PathBuf::from("models"),
@@ -213,10 +316,11 @@ mod tests {
 
 	#[test]
 	fn all_sites_mode_includes_e621_and_safebooru_without_rule34_credentials() {
-		let args = default_args();
-		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
+		let request = default_request();
+		let (clients, _skipped) =
+			build_all_sites_clients(&request).expect("all-sites clients should build");
 
-		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
+		let site_names: Vec<&str> = clients.iter().map(|c| c.site_name()).collect();
 		assert_eq!(
 			site_names,
 			vec![
@@ -236,12 +340,13 @@ mod tests {
 
 	#[test]
 	fn all_sites_mode_includes_rule34_when_credentials_are_present() {
-		let mut args = default_args();
-		args.rule34_api_key = Some("api-key".to_string());
-		args.rule34_user_id = Some("user-id".to_string());
+		let mut request = default_request();
+		request.rule34_api_key = Some("api-key".to_string());
+		request.rule34_user_id = Some("user-id".to_string());
 
-		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
-		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
+		let (clients, _skipped) =
+			build_all_sites_clients(&request).expect("all-sites clients should build");
+		let site_names: Vec<&str> = clients.iter().map(|c| c.site_name()).collect();
 
 		assert_eq!(
 			site_names,
@@ -263,12 +368,13 @@ mod tests {
 
 	#[test]
 	fn all_sites_mode_includes_gelbooru_when_credentials_are_present() {
-		let mut args = default_args();
-		args.gelbooru_api_key = Some("api-key".to_string());
-		args.gelbooru_user_id = Some("user-id".to_string());
+		let mut request = default_request();
+		request.gelbooru_api_key = Some("api-key".to_string());
+		request.gelbooru_user_id = Some("user-id".to_string());
 
-		let clients = build_all_sites_clients(&args).expect("all-sites clients should build");
-		let site_names: Vec<&str> = clients.iter().map(|client| client.site_name()).collect();
+		let (clients, _skipped) =
+			build_all_sites_clients(&request).expect("all-sites clients should build");
+		let site_names: Vec<&str> = clients.iter().map(|c| c.site_name()).collect();
 
 		assert_eq!(
 			site_names,

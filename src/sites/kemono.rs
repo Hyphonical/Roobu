@@ -3,7 +3,6 @@ use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::RwLock;
-use std::time::Duration;
 use tokio::time::sleep;
 
 use super::common::first_url_or_empty;
@@ -15,8 +14,8 @@ const SITE_NAMESPACE: u64 = 7;
 const POSTS_PAGE_SIZE: usize = 50;
 const FETCH_PAGES_PER_CYCLE: usize = 6;
 const MAX_RETRIES: u32 = 5;
-const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
+const INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(60);
 const DEFAULT_BASE_URL: &str = "https://kemono.cr";
 const KNOWN_BASE_URLS: [&str; 1] = ["https://kemono.cr"];
 
@@ -28,10 +27,7 @@ pub struct KemonoClient {
 
 impl KemonoClient {
 	pub fn new(session: Option<String>, base_url: Option<String>) -> Result<Self, RoobuError> {
-		let cargo_version = env!("CARGO_PKG_VERSION");
 		let http = Client::builder()
-			.user_agent(format!("roobu/{} (semantic search indexer)", cargo_version))
-			.timeout(Duration::from_secs(30))
 			.default_headers(default_headers()?)
 			.build()?;
 
