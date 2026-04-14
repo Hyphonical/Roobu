@@ -8,6 +8,10 @@ This directory contains implementation-focused documentation for operating and e
   - System overview, ingest/search/cluster flow, storage model, and data lifecycle.
 - [Commands](commands.md)
   - Detailed command behavior for ingest, search, and cluster.
+- [Frontend MVP Checklist](frontend-mvp-checklist.md)
+  - Backend readiness checklist and API contract workflow before building UI.
+- [Frontend Interface Sketch](frontend-interface-sketch.md)
+  - Rough page structure, component plan, and no-hardcoded-data strategy.
 - [Configuration](configuration.md)
   - Defaults, environment variables, models layout, and runtime tuning knobs.
 - [Sites](sites.md)

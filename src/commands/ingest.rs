@@ -174,6 +174,7 @@ pub async fn setup_ingest(request: &IngestRequest) -> anyhow::Result<IngestSetup
 		batch_size: request.batch_size,
 		download_concurrency: request.download_concurrency,
 		site_fetch_timeout_secs: request.site_fetch_timeout_secs,
+		event_sink: None,
 	};
 
 	let (clients, _skipped) = if request.site.is_none() {

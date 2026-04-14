@@ -1,12 +1,14 @@
 //! Command dispatchers for the CLI.
 //!
-//! Each subcommand (ingest, search, cluster, stats, serve) has its own module
+//! Each subcommand (ingest, search, cluster, stats, serve, contract) has
+//! its own module
 //! with a `run` function. This module matches the parsed CLI arguments and
 //! delegates to the appropriate handler.
 
 mod cluster;
+mod contract;
 mod ingest;
-mod search;
+pub mod search;
 mod serve;
 mod stats;
 
@@ -110,16 +112,19 @@ pub async fn run(command: Commands) -> anyhow::Result<()> {
 		Commands::Serve {
 			qdrant_url,
 			models_dir,
+			checkpoint,
 			address,
 			onnx_optimization,
 		} => {
 			serve::run(serve::Args {
 				qdrant_url,
 				models_dir,
+				checkpoint,
 				address,
 				onnx_optimization,
 			})
 			.await
 		}
+		Commands::Contract { command } => contract::run(command).await,
 	}
 }

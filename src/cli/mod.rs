@@ -1,7 +1,8 @@
 //! CLI argument definitions for the Roobu application.
 //!
 //! Defines the top-level [`Cli`] struct and [`Commands`] enum that map to
-//! the application's subcommands: ingest, search, cluster, stats, and serve.
+//! the application's subcommands: ingest, search, cluster, stats, serve,
+//! and contract tooling.
 
 use std::path::PathBuf;
 
@@ -174,9 +175,11 @@ pub enum Commands {
 
 		#[arg(
 			long,
-			help = "Restrict search to a specific site payload value (for example: rule34)"
+			num_args = 1..,
+			value_delimiter = ',',
+			help = "Restrict search to one or more sites (comma-separated or repeated flags). Omit to search all sites."
 		)]
-		site: Option<String>,
+		site: Vec<String>,
 	},
 
 	Cluster {
@@ -243,6 +246,9 @@ pub enum Commands {
 		#[arg(long, default_value = config::DEFAULT_MODELS_DIR, help = "Directory containing ONNX model files")]
 		models_dir: std::path::PathBuf,
 
+		#[arg(long, default_value = config::DEFAULT_CHECKPOINT_PATH, help = "Checkpoint file watched for ingest progress events")]
+		checkpoint: std::path::PathBuf,
+
 		#[arg(
 			long,
 			default_value = "0.0.0.0:3000",
@@ -259,13 +265,38 @@ pub enum Commands {
 		)]
 		onnx_optimization: embed::OnnxOptimizationIntensity,
 	},
+
+	Contract {
+		#[command(subcommand)]
+		command: ContractCommand,
+	},
+}
+
+#[derive(Subcommand)]
+pub enum ContractCommand {
+	Export {
+		#[arg(
+			long,
+			default_value = "docs/api/openapi.v1.json",
+			help = "Path to write the frozen OpenAPI contract snapshot"
+		)]
+		output: PathBuf,
+	},
+	Check {
+		#[arg(
+			long,
+			default_value = "docs/api/openapi.v1.json",
+			help = "Path to an existing OpenAPI contract snapshot to validate"
+		)]
+		snapshot: PathBuf,
+	},
 }
 
 #[cfg(test)]
 mod tests {
 	use clap::Parser;
 
-	use super::{Cli, Commands};
+	use super::{Cli, Commands, ContractCommand};
 	use crate::config;
 	use crate::sites::SiteKind;
 
@@ -337,6 +368,44 @@ mod tests {
 				assert_eq!(top_clusters, config::DEFAULT_CLUSTER_TOP_CLUSTERS);
 			}
 			_ => panic!("expected cluster command"),
+		}
+	}
+
+	#[test]
+	fn contract_export_parses_with_default_output() {
+		let cli = Cli::try_parse_from(["roobu", "contract", "export"])
+			.expect("contract export args should parse");
+
+		match cli.command {
+			Commands::Contract { command } => match command {
+				ContractCommand::Export { output } => {
+					assert_eq!(output, std::path::PathBuf::from("docs/api/openapi.v1.json"));
+				}
+				_ => panic!("expected contract export command"),
+			},
+			_ => panic!("expected contract command"),
+		}
+	}
+
+	#[test]
+	fn contract_check_parses_with_custom_snapshot() {
+		let cli = Cli::try_parse_from([
+			"roobu",
+			"contract",
+			"check",
+			"--snapshot",
+			"docs/api/custom.json",
+		])
+		.expect("contract check args should parse");
+
+		match cli.command {
+			Commands::Contract { command } => match command {
+				ContractCommand::Check { snapshot } => {
+					assert_eq!(snapshot, std::path::PathBuf::from("docs/api/custom.json"));
+				}
+				_ => panic!("expected contract check command"),
+			},
+			_ => panic!("expected contract command"),
 		}
 	}
 }

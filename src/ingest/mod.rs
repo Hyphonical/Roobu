@@ -8,12 +8,20 @@
 
 pub mod checkpoint;
 mod cycle;
+pub mod events;
 
 pub use checkpoint::{CheckpointMap, get as checkpoint_get, load as checkpoint_load};
 pub use cycle::{IngestConfig, run_cycle};
+pub use events::{IngestEvent, IngestEventSink};
 
 use crate::sites::BooruClient;
 use owo_colors::OwoColorize;
+
+fn emit_event(config: &IngestConfig, event: IngestEvent) {
+	if let Some(sink) = &config.event_sink {
+		sink(event);
+	}
+}
 
 /// Run the ingest loop for a single site.
 ///
@@ -45,10 +53,29 @@ pub async fn run(
 	loop {
 		let cycle_start = std::time::Instant::now();
 		match run_cycle(&client, site, &mut last_id, &mut context).await {
-			Ok(stats) => cycle::print_cycle_stats(&stats),
+			Ok(stats) => {
+				emit_event(
+					config,
+					IngestEvent::CycleComplete {
+						site: site.to_string(),
+						fetched: stats.fetched_posts,
+						upserted: stats.upserted_posts,
+						elapsed_secs: stats.elapsed.as_secs_f64(),
+					},
+				);
+				cycle::print_cycle_stats(&stats)
+			}
 			Err(error) => {
 				let elapsed = cycle_start.elapsed();
 				let error_chain = format!("{error:#}");
+				emit_event(
+					config,
+					IngestEvent::CycleFailed {
+						site: site.to_string(),
+						error: error_chain.clone(),
+						elapsed_secs: elapsed.as_secs_f64(),
+					},
+				);
 				crate::ui_warn!(
 					"{} cycle failed ({error_chain}) after {} · skipping until next poll",
 					site,
@@ -68,6 +95,13 @@ pub async fn run(
 			site,
 			sleep_secs = config.poll_interval_secs,
 			"ingest loop sleep"
+		);
+		emit_event(
+			config,
+			IngestEvent::Sleeping {
+				site: site.to_string(),
+				sleep_secs: config.poll_interval_secs,
+			},
 		);
 
 		tokio::time::sleep(std::time::Duration::from_secs(config.poll_interval_secs)).await;
@@ -131,10 +165,29 @@ pub async fn run_multi(
 
 			let cycle_start = Instant::now();
 			match run_cycle(&state.client, state.site, &mut state.last_id, &mut context).await {
-				Ok(cycle_stats) => cycle::print_cycle_stats(&cycle_stats),
+				Ok(cycle_stats) => {
+					emit_event(
+						config,
+						IngestEvent::CycleComplete {
+							site: state.site.to_string(),
+							fetched: cycle_stats.fetched_posts,
+							upserted: cycle_stats.upserted_posts,
+							elapsed_secs: cycle_stats.elapsed.as_secs_f64(),
+						},
+					);
+					cycle::print_cycle_stats(&cycle_stats)
+				}
 				Err(error) => {
 					let elapsed = cycle_start.elapsed();
 					let error_chain = format!("{error:#}");
+					emit_event(
+						config,
+						IngestEvent::CycleFailed {
+							site: state.site.to_string(),
+							error: error_chain.clone(),
+							elapsed_secs: elapsed.as_secs_f64(),
+						},
+					);
 					crate::ui_warn!(
 						"{} cycle failed ({error_chain}) after {} · skipping this site for now",
 						state.site,
@@ -163,6 +216,13 @@ pub async fn run_multi(
 				elapsed_secs = elapsed.as_secs_f64(),
 				sleep_secs = sleep_duration.as_secs_f64(),
 				"per-site ingest loop sleep"
+			);
+			emit_event(
+				config,
+				IngestEvent::Sleeping {
+					site: state.site.to_string(),
+					sleep_secs: sleep_duration.as_secs(),
+				},
 			);
 			tokio::time::sleep(sleep_duration).await;
 		}

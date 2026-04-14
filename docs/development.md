@@ -14,6 +14,8 @@ With cargo:
 - cargo check
 - cargo clippy --all-targets --all-features
 - cargo test
+- cargo run -- contract export --output docs/api/openapi.v1.json
+- cargo run -- contract check --snapshot docs/api/openapi.v1.json
 
 With just:
 
@@ -22,6 +24,9 @@ With just:
 - just check
 - just lint
 - just test
+- just contract-export
+- just contract-check
+- just frontend-types
 - just docker-up
 - just docker-down
 - just docker-reset

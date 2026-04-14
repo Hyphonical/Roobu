@@ -1,86 +1,136 @@
 //! WebSocket handler for real-time ingest progress streaming.
 
+use std::time::Duration;
+
 use axum::{
 	extract::State,
 	extract::ws::{Message, WebSocket, WebSocketUpgrade},
 	response::IntoResponse,
 };
-use serde::Serialize;
+use tokio::sync::broadcast::error::RecvError;
 
 use super::state::AppState;
-
-/// Events sent over the WebSocket ingest progress channel.
-///
-/// These are broadcast to connected clients as ingest cycles run,
-/// enabling real-time progress monitoring in the frontend.
-#[allow(dead_code)]
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", content = "data")]
-pub enum IngestProgressEvent {
-	/// A site cycle completed successfully.
-	CycleComplete {
-		site: String,
-		fetched: usize,
-		upserted: usize,
-		elapsed_secs: f64,
-	},
-	/// A site cycle failed.
-	CycleFailed {
-		site: String,
-		error: String,
-		elapsed_secs: f64,
-	},
-	/// Checkpoint was updated and persisted.
-	CheckpointUpdated { site: String, last_id: u64 },
-	/// Ingest loop is sleeping between cycles.
-	Sleeping { site: String, sleep_secs: u64 },
-}
+use crate::ingest::events::IngestEvent;
 
 /// Upgrade an HTTP request to a WebSocket connection.
-pub async fn ws_handler(ws: WebSocketUpgrade, State(_state): State<AppState>) -> impl IntoResponse {
-	ws.on_upgrade(handle_socket)
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+	ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
 /// Handle an established WebSocket connection.
 ///
-/// Sends a welcome message and keeps the connection alive by responding
-/// to pings. In a full implementation, this would subscribe to a broadcast
-/// channel that receives events from the ingest loop.
-async fn handle_socket(mut socket: WebSocket) {
+/// Sends an initial snapshot and then streams ingest events through a
+/// broadcast subscription while handling control frames from the client.
+async fn handle_socket(mut socket: WebSocket, state: AppState) {
+	let mut event_rx = state.subscribe_ingest_events();
+
 	// Send a welcome message to confirm the connection.
-	if socket
-		.send(Message::Text(
-			serde_json::json!({
-				"type": "connected",
-				"data": { "message": "Connected to Roobu ingest progress channel" }
-			})
-			.to_string()
-			.into(),
-		))
-		.await
-		.is_err()
+	if send_json_value(
+		&mut socket,
+		serde_json::json!({
+			"type": "connected",
+			"data": { "message": "Connected to Roobu ingest progress channel" }
+		}),
+	)
+	.await
+	.is_err()
 	{
 		return;
 	}
 
-	// Keep the connection alive and listen for client messages.
-	while let Some(msg) = socket.recv().await {
-		match msg {
-			Ok(Message::Text(text)) => {
-				tracing::debug!(%text, "ws client message");
+	let snapshot = state.current_ingest_status().await;
+	if send_ingest_event(
+		&mut socket,
+		IngestEvent::StatusSnapshot {
+			is_running: snapshot.is_running,
+			active_sites: snapshot.active_sites,
+			last_checkpoint: snapshot.last_checkpoint,
+		},
+	)
+	.await
+	.is_err()
+	{
+		return;
+	}
+
+	let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
+	heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+	loop {
+		tokio::select! {
+			incoming = socket.recv() => {
+				match incoming {
+					Some(Ok(Message::Text(text))) => {
+						tracing::debug!(%text, "ws client message");
+					}
+					Some(Ok(Message::Ping(data))) => {
+						if socket.send(Message::Pong(data)).await.is_err() {
+							break;
+						}
+					}
+					Some(Ok(Message::Close(_))) => {
+						tracing::debug!("ws client disconnected");
+						break;
+					}
+					Some(Err(error)) => {
+						tracing::warn!(error = %error, "ws read error");
+						break;
+					}
+					None => break,
+					_ => {}
+				}
 			}
-			Ok(Message::Close(_)) => {
-				tracing::debug!("ws client disconnected");
-				break;
+			event = event_rx.recv() => {
+				match event {
+					Ok(event) => {
+						if send_ingest_event(&mut socket, event).await.is_err() {
+							break;
+						}
+					}
+					Err(RecvError::Lagged(dropped)) => {
+						tracing::warn!(dropped, "ws ingest stream lagged");
+						if send_json_value(
+							&mut socket,
+							serde_json::json!({
+								"type": "lagged",
+								"data": { "dropped": dropped }
+							}),
+						)
+						.await
+						.is_err()
+						{
+							break;
+						}
+					}
+					Err(RecvError::Closed) => {
+						tracing::debug!("ws ingest event source closed");
+						break;
+					}
+				}
 			}
-			Ok(Message::Ping(data)) => {
-				let _ = socket.send(Message::Pong(data)).await;
+			_ = heartbeat.tick() => {
+				if socket.send(Message::Ping(Vec::<u8>::new().into())).await.is_err() {
+					break;
+				}
 			}
-			Err(e) => {
-				tracing::warn!(error = %e, "ws error");
-				break;
-			}
-			_ => {}
 		}
 	}
+}
+
+async fn send_ingest_event(socket: &mut WebSocket, event: IngestEvent) -> Result<(), ()> {
+	let serialized = serde_json::to_string(&event).map_err(|error| {
+		tracing::warn!(error = %error, "failed to serialize ingest event");
+	})?;
+
+	socket
+		.send(Message::Text(serialized.into()))
+		.await
+		.map_err(|_| ())
+}
+
+async fn send_json_value(socket: &mut WebSocket, value: serde_json::Value) -> Result<(), ()> {
+	socket
+		.send(Message::Text(value.to_string().into()))
+		.await
+		.map_err(|_| ())
 }

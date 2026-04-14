@@ -28,6 +28,18 @@ clean:
 check: fmt lint
     cargo check
 
+# Export frozen OpenAPI contract snapshot
+contract-export:
+    cargo run -- contract export --output docs/api/openapi.v1.json
+
+# Validate generated OpenAPI against frozen snapshot
+contract-check:
+    cargo run -- contract check --snapshot docs/api/openapi.v1.json
+
+# Generate typed TypeScript API schema from frozen OpenAPI snapshot
+frontend-types:
+    npx --yes openapi-typescript@7.10.1 docs/api/openapi.v1.json -o docs/frontend/roobu-api-client.ts
+
 # Run clippy linter
 lint: fmt
     cargo clippy --all-targets --all-features -- -D warnings

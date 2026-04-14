@@ -17,6 +17,7 @@ use crate::embed::Embedder;
 use crate::error::RoobuError;
 use crate::ingest::checkpoint;
 use crate::ingest::checkpoint::CheckpointMap;
+use crate::ingest::events::IngestEvent;
 use crate::sites::{BooruClient, Post, validate_downloaded_image};
 use crate::store::{PostEmbedding, Store};
 use crate::{ui_detail, ui_step, ui_success, ui_warn};
@@ -27,6 +28,7 @@ pub struct IngestConfig {
 	pub batch_size: usize,
 	pub download_concurrency: usize,
 	pub site_fetch_timeout_secs: u64,
+	pub event_sink: Option<crate::ingest::IngestEventSink>,
 }
 
 /// State for a single site in the multi-site ingest loop.
@@ -269,6 +271,12 @@ async fn process_embedded_batch(
 		*last_id = new_last;
 		checkpoint::set(context.ckpt, site, *last_id);
 		checkpoint::save(context.checkpoint_path, context.ckpt)?;
+		if let Some(sink) = &context.config.event_sink {
+			sink(IngestEvent::CheckpointUpdated {
+				site: site.to_string(),
+				last_id: *last_id,
+			});
+		}
 	}
 
 	ui_success!(

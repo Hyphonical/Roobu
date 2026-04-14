@@ -1,0 +1,1294 @@
+{
+  "components": {
+    "schemas": {
+      "ActivityDayDto": {
+        "description": "A single day's activity entry.",
+        "properties": {
+          "count": {
+            "description": "Number of posts ingested on this day.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "date": {
+            "description": "Date in ISO 8601 format (YYYY-MM-DD).",
+            "type": "string"
+          },
+          "intensity": {
+            "description": "Normalized activity level in [0.0, 1.0].",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "count",
+          "intensity"
+        ],
+        "type": "object"
+      },
+      "ActivityDto": {
+        "description": "Activity response.",
+        "properties": {
+          "average": {
+            "format": "double",
+            "type": "number"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDayDto"
+            },
+            "type": "array"
+          },
+          "peak": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "days",
+          "total",
+          "average",
+          "peak"
+        ],
+        "type": "object"
+      },
+      "ActivityParams": {
+        "description": "Query parameters for the `/api/activity` endpoint.",
+        "properties": {
+          "days": {
+            "description": "Number of days to look back (default 90, max 365).",
+            "example": 90,
+            "format": "int64",
+            "maximum": 365,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "site": {
+            "description": "Sites to restrict results to. Repeated param or comma-separated.",
+            "example": [
+              "rule34",
+              "e621"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ApiResponse_ActivityDto": {
+        "description": "Standard API response envelope.\n\nAll successful responses are wrapped in this structure to provide\nconsistent pagination metadata and a uniform client interface.",
+        "properties": {
+          "data": {
+            "description": "Activity response.",
+            "properties": {
+              "average": {
+                "format": "double",
+                "type": "number"
+              },
+              "days": {
+                "items": {
+                  "$ref": "#/components/schemas/ActivityDayDto"
+                },
+                "type": "array"
+              },
+              "peak": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "days",
+              "total",
+              "average",
+              "peak"
+            ],
+            "type": "object"
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseMeta",
+                "description": "Pagination metadata (present for list endpoints)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_ErrorDto": {
+        "description": "Standard API response envelope.\n\nAll successful responses are wrapped in this structure to provide\nconsistent pagination metadata and a uniform client interface.",
+        "properties": {
+          "data": {
+            "description": "Error response body.",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "type": "object"
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseMeta",
+                "description": "Pagination metadata (present for list endpoints)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_IngestStatusDto": {
+        "description": "Standard API response envelope.\n\nAll successful responses are wrapped in this structure to provide\nconsistent pagination metadata and a uniform client interface.",
+        "properties": {
+          "data": {
+            "description": "Snapshot of the ingest service status.",
+            "properties": {
+              "active_sites": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "is_running": {
+                "type": "boolean"
+              },
+              "last_checkpoint": {}
+            },
+            "required": [
+              "is_running",
+              "active_sites"
+            ],
+            "type": "object"
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseMeta",
+                "description": "Pagination metadata (present for list endpoints)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_PostDto": {
+        "description": "Standard API response envelope.\n\nAll successful responses are wrapped in this structure to provide\nconsistent pagination metadata and a uniform client interface.",
+        "properties": {
+          "data": {
+            "description": "A post with full metadata.\n\nUsed across all endpoints that return post data (search, recent,\nsimilar, single post). The `score` field is only populated for search\nand similarity results.",
+            "properties": {
+              "direct_image_url": {
+                "description": "URL to the full-resolution image (falls back to thumbnail if unavailable).",
+                "type": "string"
+              },
+              "height": {
+                "description": "Image height in pixels (0 if unknown).",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "ingestion_date": {
+                "description": "Unix timestamp of when the post was ingested.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "post_id": {
+                "description": "Site-local post ID.",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "post_url": {
+                "description": "Canonical URL to the post page on the source site.",
+                "type": "string"
+              },
+              "rating": {
+                "description": "Content rating (e.g. `\"s\"`, `\"q\"`, `\"e\"`).",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "score": {
+                "description": "Cosine similarity score in [0.0, 1.0]; only set for search/similar results.",
+                "format": "float",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "site": {
+                "description": "Site name this post belongs to (e.g. `\"rule34\"`, `\"e621\"`).",
+                "type": "string"
+              },
+              "tags": {
+                "description": "Space-separated tags describing the image content.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "thumbnail_url": {
+                "description": "URL to a small thumbnail image.",
+                "type": "string"
+              },
+              "width": {
+                "description": "Image width in pixels (0 if unknown).",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "post_id",
+              "site",
+              "post_url",
+              "thumbnail_url",
+              "direct_image_url",
+              "width",
+              "height",
+              "ingestion_date"
+            ],
+            "type": "object"
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseMeta",
+                "description": "Pagination metadata (present for list endpoints)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_Vec_PostDto": {
+        "description": "Standard API response envelope.\n\nAll successful responses are wrapped in this structure to provide\nconsistent pagination metadata and a uniform client interface.",
+        "properties": {
+          "data": {
+            "items": {
+              "description": "A post with full metadata.\n\nUsed across all endpoints that return post data (search, recent,\nsimilar, single post). The `score` field is only populated for search\nand similarity results.",
+              "properties": {
+                "direct_image_url": {
+                  "description": "URL to the full-resolution image (falls back to thumbnail if unavailable).",
+                  "type": "string"
+                },
+                "height": {
+                  "description": "Image height in pixels (0 if unknown).",
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "ingestion_date": {
+                  "description": "Unix timestamp of when the post was ingested.",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "post_id": {
+                  "description": "Site-local post ID.",
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "post_url": {
+                  "description": "Canonical URL to the post page on the source site.",
+                  "type": "string"
+                },
+                "rating": {
+                  "description": "Content rating (e.g. `\"s\"`, `\"q\"`, `\"e\"`).",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "score": {
+                  "description": "Cosine similarity score in [0.0, 1.0]; only set for search/similar results.",
+                  "format": "float",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "site": {
+                  "description": "Site name this post belongs to (e.g. `\"rule34\"`, `\"e621\"`).",
+                  "type": "string"
+                },
+                "tags": {
+                  "description": "Space-separated tags describing the image content.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "thumbnail_url": {
+                  "description": "URL to a small thumbnail image.",
+                  "type": "string"
+                },
+                "width": {
+                  "description": "Image width in pixels (0 if unknown).",
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "post_id",
+                "site",
+                "post_url",
+                "thumbnail_url",
+                "direct_image_url",
+                "width",
+                "height",
+                "ingestion_date"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseMeta",
+                "description": "Pagination metadata (present for list endpoints)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_Vec_SiteDto": {
+        "description": "Standard API response envelope.\n\nAll successful responses are wrapped in this structure to provide\nconsistent pagination metadata and a uniform client interface.",
+        "properties": {
+          "data": {
+            "items": {
+              "description": "Metadata about an indexed site.",
+              "properties": {
+                "count": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "earliest_ingestion": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "latest_ingestion": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "namespace",
+                "count",
+                "earliest_ingestion",
+                "latest_ingestion"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseMeta",
+                "description": "Pagination metadata (present for list endpoints)."
+              }
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ErrorDto": {
+        "description": "Error response body.",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "IngestStatusDto": {
+        "description": "Snapshot of the ingest service status.",
+        "properties": {
+          "active_sites": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "is_running": {
+            "type": "boolean"
+          },
+          "last_checkpoint": {}
+        },
+        "required": [
+          "is_running",
+          "active_sites"
+        ],
+        "type": "object"
+      },
+      "PostDto": {
+        "description": "A post with full metadata.\n\nUsed across all endpoints that return post data (search, recent,\nsimilar, single post). The `score` field is only populated for search\nand similarity results.",
+        "properties": {
+          "direct_image_url": {
+            "description": "URL to the full-resolution image (falls back to thumbnail if unavailable).",
+            "type": "string"
+          },
+          "height": {
+            "description": "Image height in pixels (0 if unknown).",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ingestion_date": {
+            "description": "Unix timestamp of when the post was ingested.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "post_id": {
+            "description": "Site-local post ID.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "post_url": {
+            "description": "Canonical URL to the post page on the source site.",
+            "type": "string"
+          },
+          "rating": {
+            "description": "Content rating (e.g. `\"s\"`, `\"q\"`, `\"e\"`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "score": {
+            "description": "Cosine similarity score in [0.0, 1.0]; only set for search/similar results.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "site": {
+            "description": "Site name this post belongs to (e.g. `\"rule34\"`, `\"e621\"`).",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Space-separated tags describing the image content.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "thumbnail_url": {
+            "description": "URL to a small thumbnail image.",
+            "type": "string"
+          },
+          "width": {
+            "description": "Image width in pixels (0 if unknown).",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "post_id",
+          "site",
+          "post_url",
+          "thumbnail_url",
+          "direct_image_url",
+          "width",
+          "height",
+          "ingestion_date"
+        ],
+        "type": "object"
+      },
+      "RecentParams": {
+        "description": "Query parameters for the `/api/recent` endpoint.",
+        "properties": {
+          "limit": {
+            "description": "Number of results to return (default 20, max 100).",
+            "example": 20,
+            "format": "int64",
+            "maximum": 100,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "description": "Pagination offset (default: 0).",
+            "example": 0,
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "site": {
+            "description": "Sites to restrict results to. Repeated param or comma-separated.",
+            "example": [
+              "rule34",
+              "e621"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ResponseMeta": {
+        "description": "Pagination and query metadata.",
+        "properties": {
+          "count": {
+            "description": "Number of items returned in this response.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "next_offset": {
+            "description": "Offset for the next page (None if no more results).",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "type": "object"
+      },
+      "SearchParams": {
+        "description": "Query parameters for the `/api/search` endpoint.",
+        "properties": {
+          "image_url": {
+            "description": "Publicly accessible image URL to use as a visual query.",
+            "example": "https://example.com/image.jpg",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "image_weight": {
+            "description": "Image weight for hybrid text+image queries, in [0.0, 1.0].",
+            "example": 0.5,
+            "format": "float",
+            "maximum": 1,
+            "minimum": 0,
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Maximum number of results to return (default: 10, max: 100).",
+            "example": 10,
+            "format": "int64",
+            "maximum": 100,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "q": {
+            "description": "Text query for semantic search.",
+            "example": "fluffy cat sitting on a windowsill",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site": {
+            "description": "Sites to restrict results to. Repeated param or comma-separated.\nOmit to search across all indexed sites.",
+            "example": [
+              "rule34",
+              "e621"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "SearchUploadForm": {
+        "description": "Multipart form fields for `/api/search/upload`.",
+        "properties": {
+          "image": {
+            "description": "Uploaded image file used as visual query.",
+            "format": "binary",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "image_weight": {
+            "description": "Image weight for hybrid text+image queries, in [0.0, 1.0].",
+            "example": 0.5,
+            "format": "float",
+            "maximum": 1,
+            "minimum": 0,
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Maximum number of results to return (default: 10, max: 100).",
+            "example": 10,
+            "format": "int64",
+            "maximum": 100,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "q": {
+            "description": "Text query for semantic search.",
+            "example": "fluffy cat sitting on a windowsill",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site": {
+            "description": "Sites to restrict results to. Comma-separated.",
+            "example": "rule34,e621",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SimilarParams": {
+        "description": "Query parameters for the `/api/search/similar/{site}/{post_id}` endpoint.",
+        "properties": {
+          "limit": {
+            "description": "Maximum results to return (default 10, max 100).",
+            "example": 10,
+            "format": "int64",
+            "maximum": 100,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SiteDto": {
+        "description": "Metadata about an indexed site.",
+        "properties": {
+          "count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "earliest_ingestion": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "latest_ingestion": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespace": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "namespace",
+          "count",
+          "earliest_ingestion",
+          "latest_ingestion"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Semantic image search API for booru sites. Supports text queries, image URL queries, and hybrid text+image searches with optional per-site filtering.",
+    "license": {
+      "identifier": "MIT",
+      "name": "MIT"
+    },
+    "title": "Roobu API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/activity": {
+      "get": {
+        "operationId": "activity",
+        "parameters": [
+          {
+            "description": "Days to look back (default 90, max 365)",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Sites to filter by (repeated or comma-separated)",
+            "in": "query",
+            "name": "site",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ActivityDto"
+                }
+              }
+            },
+            "description": "Activity data"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Get ingestion activity over time (GitHub-style contribution graph).",
+        "tags": [
+          "activity"
+        ]
+      }
+    },
+    "/api/ingest/status": {
+      "get": {
+        "operationId": "ingest_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_IngestStatusDto"
+                }
+              }
+            },
+            "description": "Ingest status snapshot"
+          }
+        },
+        "summary": "Get current ingest status.",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/api/post/{site}/{post_id}": {
+      "get": {
+        "operationId": "get_post",
+        "parameters": [
+          {
+            "description": "Site name (e.g. rule34, e621)",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Site-local post ID",
+            "in": "path",
+            "name": "post_id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PostDto"
+                }
+              }
+            },
+            "description": "Post found"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Post not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Get a single post by site and ID.",
+        "tags": [
+          "posts"
+        ]
+      }
+    },
+    "/api/recent": {
+      "get": {
+        "operationId": "recent",
+        "parameters": [
+          {
+            "description": "Number of results (default 20, max 100)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Sites to filter by (repeated or comma-separated)",
+            "in": "query",
+            "name": "site",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Pagination offset",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_PostDto"
+                }
+              }
+            },
+            "description": "Recent posts"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Get the most recently ingested posts.",
+        "tags": [
+          "recent"
+        ]
+      }
+    },
+    "/api/search": {
+      "get": {
+        "operationId": "search",
+        "parameters": [
+          {
+            "description": "Text query for semantic search",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Publicly accessible image URL for visual search",
+            "in": "query",
+            "name": "image_url",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Sites to filter by (repeated or comma-separated)",
+            "in": "query",
+            "name": "site",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Maximum results (default 10, max 100)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Image weight for hybrid queries [0.0-1.0]",
+            "in": "query",
+            "name": "image_weight",
+            "required": false,
+            "schema": {
+              "format": "float",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_PostDto"
+                }
+              }
+            },
+            "description": "Search results"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Bad request"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Semantic search over indexed images.",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/api/search/similar/{site}/{post_id}": {
+      "get": {
+        "operationId": "search_similar",
+        "parameters": [
+          {
+            "description": "Site name of the target post",
+            "in": "path",
+            "name": "site",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Site-local post ID of the target",
+            "in": "path",
+            "name": "post_id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Maximum results (default 10, max 100)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_PostDto"
+                }
+              }
+            },
+            "description": "Similar posts"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Target post not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Find visually similar images to a known post.",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/api/search/upload": {
+      "post": {
+        "operationId": "search_upload",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchUploadForm"
+              }
+            }
+          },
+          "description": "Multipart form with optional q text, optional image file, optional comma-separated site, limit, and image_weight",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_PostDto"
+                }
+              }
+            },
+            "description": "Search results"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Bad request"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "Semantic search using multipart form-data, including direct image upload.",
+        "tags": [
+          "search"
+        ]
+      }
+    },
+    "/api/sites": {
+      "get": {
+        "operationId": "sites",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_SiteDto"
+                }
+              }
+            },
+            "description": "List of indexed sites"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ErrorDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          }
+        },
+        "summary": "List all indexed sites with metadata.",
+        "tags": [
+          "sites"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Semantic image search",
+      "name": "search"
+    },
+    {
+      "description": "Recently ingested posts",
+      "name": "recent"
+    },
+    {
+      "description": "Individual post lookup",
+      "name": "posts"
+    },
+    {
+      "description": "Ingestion activity timeline",
+      "name": "activity"
+    },
+    {
+      "description": "Indexed site metadata",
+      "name": "sites"
+    },
+    {
+      "description": "Ingest process monitoring",
+      "name": "ingest"
+    }
+  ]
+}

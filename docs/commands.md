@@ -98,7 +98,8 @@ Semantic retrieval from Qdrant using text, image, or hybrid query vectors.
 - --limit
   - Number of results to return.
 - --site
-  - Optional payload filter to one indexed site.
+  - Optional payload filter to one or more indexed sites.
+  - Supports comma-separated values and repeated flags.
 
 ### Scoring Behavior
 
@@ -113,6 +114,27 @@ Each result prints:
 - decoded post id
 - match percentage
 - resolved post URL
+
+## contract
+
+Freeze and validate the API contract used by frontend clients.
+
+### Subcommands
+
+- export
+  - roobu contract export --output docs/api/openapi.v1.json
+  - Generates a normalized OpenAPI snapshot from the current backend routes and schemas.
+- check
+  - roobu contract check --snapshot docs/api/openapi.v1.json
+  - Fails if generated OpenAPI no longer matches the frozen snapshot.
+
+### Typed Frontend Client Output
+
+- Generate TypeScript API types from the frozen contract:
+  - npx --yes openapi-typescript@7.10.1 docs/api/openapi.v1.json -o docs/frontend/roobu-api-client.ts
+- Use the runtime wrapper in:
+  - docs/frontend/roobu-api-runtime.ts
+  - This wrapper provides typed fetch helpers for search, upload-search, similar-search, recent, post lookup, activity, sites, and ingest status.
 
 ## cluster
 

@@ -42,6 +42,7 @@ pub struct PostEmbedding {
 /// A single search result returned from Qdrant.
 pub struct SearchResult {
 	pub post_id: u64,
+	pub site: String,
 	pub post_url: String,
 	pub thumbnail_url: String,
 	pub direct_image_url: String,
@@ -49,6 +50,14 @@ pub struct SearchResult {
 	pub height: u32,
 	pub ingestion_date: i64,
 	pub score: f32,
+	pub tags: String,
+	pub rating: String,
+}
+
+/// A paginated page of recent posts.
+pub struct RecentPage {
+	pub posts: Vec<SearchResult>,
+	pub has_more: bool,
 }
 
 /// A point fetched from Qdrant for clustering, containing its embedding vector.
@@ -56,6 +65,16 @@ pub struct ClusterPoint {
 	pub post_id: u64,
 	pub post_url: String,
 	pub image_vec: Vec<f32>,
+}
+
+/// Metadata about an indexed site.
+pub struct SiteInfo {
+	pub name: String,
+	#[allow(dead_code)]
+	pub namespace: u64,
+	pub count: u64,
+	pub earliest_ingestion: i64,
+	pub latest_ingestion: i64,
 }
 
 /// Qdrant client wrapper with collection management and query helpers.
@@ -181,11 +200,14 @@ impl Store {
 	/// Fetches `limit * SEARCH_FETCH_LIMIT_MULTIPLIER` candidates to account
 	/// for post-filtering when a site filter is applied, then truncates to
 	/// the requested limit.
+	///
+	/// `site_filter` is a slice of site name strings. An empty slice means no
+	/// filtering (all sites). Multiple entries are combined with OR semantics.
 	pub async fn search(
 		&self,
 		query_vec: Vec<f32>,
 		limit: u64,
-		site_filter: Option<&str>,
+		site_filter: &[&str],
 	) -> Result<Vec<SearchResult>, RoobuError> {
 		search::search(&self.client, query_vec, limit, site_filter).await
 	}
@@ -206,5 +228,51 @@ impl Store {
 	/// Compute the distribution of indexed points across all sites.
 	pub async fn fetch_site_counts(&self, page_size: u32) -> Result<SiteDistribution, RoobuError> {
 		stats::fetch_site_counts(&self.client, page_size).await
+	}
+
+	/// Fetch a single post by site name and post ID.
+	pub async fn fetch_post(
+		&self,
+		site: &str,
+		post_id: u64,
+	) -> Result<Option<SearchResult>, RoobuError> {
+		search::fetch_post(&self.client, site, post_id).await
+	}
+
+	/// Find posts similar to a given post by using its embedding vector.
+	pub async fn search_similar(
+		&self,
+		site: &str,
+		post_id: u64,
+		limit: u64,
+	) -> Result<Vec<SearchResult>, RoobuError> {
+		search::search_similar(&self.client, site, post_id, limit).await
+	}
+
+	/// Fetch the most recently ingested posts.
+	///
+	/// Uses a range filter on `ingestion_date` for efficient retrieval,
+	/// then paginates with an offset. Returns a page with a `has_more` flag.
+	pub async fn fetch_recent(
+		&self,
+		limit: u64,
+		offset: u64,
+		site_filter: &[&str],
+	) -> Result<RecentPage, RoobuError> {
+		search::fetch_recent(&self.client, limit, offset, site_filter).await
+	}
+
+	/// Fetch ingestion activity data: daily counts over the last N days.
+	pub async fn fetch_activity(
+		&self,
+		days: u64,
+		site_filter: &[&str],
+	) -> Result<Vec<(String, u64)>, RoobuError> {
+		stats::fetch_activity(&self.client, days, site_filter).await
+	}
+
+	/// Fetch metadata for all indexed sites.
+	pub async fn fetch_sites(&self) -> Result<Vec<SiteInfo>, RoobuError> {
+		stats::fetch_sites(&self.client).await
 	}
 }

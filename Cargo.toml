@@ -50,9 +50,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 owo-colors   = { version = "4", features = ["supports-colors"] }
 
 # ── Web API (REST + WebSocket) ─────────────────────────────
-axum         = { version = "0.8", features = ["ws", "json"] }
+axum         = { version = "0.8", features = ["ws", "json", "multipart"] }
 tower        = "0.5"
 tower-http   = { version = "0.6", features = ["cors", "trace"] }
+
+# ── OpenAPI / Swagger ──────────────────────────────────────
+utoipa            = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 # ── Release Profile ────────────────────────────────────────
 [profile.release]
